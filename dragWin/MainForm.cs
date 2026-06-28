@@ -7,12 +7,21 @@ public sealed class MainForm : Form
     private const int LaneCount = 4;
 
     private readonly DragSerialClient client = new();
+    private readonly RaceRepository raceRepository = new();
     private readonly ComboBox portSelector = new() { DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly Button refreshButton = new() { Text = "Refresh" };
     private readonly Button connectButton = new() { Text = "Connect" };
     private readonly Button pingButton = new() { Text = "Ping", Enabled = false };
     private readonly Button statusButton = new() { Text = "Status", Enabled = false };
     private readonly Button resetButton = new() { Text = "Reset", Enabled = false };
+    private readonly Button tournamentButton = new() { Text = "Racers / Tournament" };
+    private readonly ComboBox tournamentSelector = new()
+    {
+        DropDownStyle = ComboBoxStyle.DropDownList,
+        Width = 180,
+        DisplayMember = nameof(Tournament.Name)
+    };
+    private readonly Button runTournamentButton = new() { Text = "Run / Resume" };
     private readonly Label connectionLabel = new() { AutoSize = true, Text = "Disconnected" };
     private readonly ComboBox modeSelector = new()
     {
@@ -94,6 +103,12 @@ public sealed class MainForm : Form
         pingButton.Click += (_, _) => SendCommand("PING");
         statusButton.Click += (_, _) => SendCommand("STATUS");
         resetButton.Click += (_, _) => SendCommand("RESET");
+        tournamentButton.Click += (_, _) =>
+        {
+            new TournamentSetupForm(raceRepository).ShowDialog(this);
+            RefreshTournaments();
+        };
+        runTournamentButton.Click += (_, _) => RunSelectedTournament();
         applySettingsButton.Click += (_, _) => ApplyRaceSettings();
         modeSelector.SelectedIndexChanged += (_, _) => UpdateDialInputState();
         laneCountSelector.SelectedIndexChanged += (_, _) => UpdateDialInputState();
@@ -103,6 +118,7 @@ public sealed class MainForm : Form
             PostToUi(() => AppendLog($"! {error}"));
 
         RefreshPorts();
+        RefreshTournaments();
         UpdateDialInputState();
     }
 
@@ -125,6 +141,9 @@ public sealed class MainForm : Form
              pingButton,
              statusButton,
              resetButton,
+             tournamentButton,
+             tournamentSelector,
+             runTournamentButton,
              connectionLabel]);
         return controls;
     }
@@ -234,6 +253,29 @@ public sealed class MainForm : Form
         {
             portSelector.SelectedIndex = 0;
         }
+    }
+
+    private void RefreshTournaments()
+    {
+        var selectedId = (tournamentSelector.SelectedItem as Tournament)?.Id;
+        tournamentSelector.DataSource = raceRepository.GetTournaments().ToList();
+        if (selectedId.HasValue)
+        {
+            tournamentSelector.SelectedItem = tournamentSelector.Items
+                .Cast<Tournament>()
+                .FirstOrDefault(item => item.Id == selectedId);
+        }
+    }
+
+    private void RunSelectedTournament()
+    {
+        if (tournamentSelector.SelectedItem is not Tournament tournament)
+        {
+            MessageBox.Show(this, "Create or select a tournament first.", Text);
+            return;
+        }
+        new TournamentRunnerForm(tournament, raceRepository, client).ShowDialog(this);
+        RefreshTournaments();
     }
 
     private void ToggleConnection()

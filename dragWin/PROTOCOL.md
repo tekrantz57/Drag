@@ -40,6 +40,7 @@ Track length is race metadata; speed-trap length is used for MPH calculation.
 - `STATUS`
 - `RESET`
 - `SET:LANES:<2|4>`
+- `SET:HEAT_LANES:<comma-separated-physical-lanes>`
 - `SET:DISTANCES:<track-inches-x1000>:<trap-inches-x1000>`
 - `SET:MODE:HEADS_UP`
 - `SET:MODE:BRACKET`
@@ -53,10 +54,11 @@ for the track to clear.
 - `ACK:PING`
 - `ACK:RESET`
 - `ACK:SET:LANES:<2|4>`
+- `ACK:SET:HEAT_LANES:<comma-separated-physical-lanes>`
 - `ACK:SET:DISTANCES:<track-inches-x1000>:<trap-inches-x1000>`
 - `ACK:SET:MODE:<mode>`
 - `ACK:SET:DIAL:<lane>:<milliseconds>`
-- `STATUS:TREE:<state>:MODE:<mode>:LANES:<2|4>:TRACK_IN_X1000:<value>:TRAP_IN_X1000:<value>`
+- `STATUS:TREE:<state>:MODE:<mode>:LANES:<2|4>:HEAT_LANES:<list>:TRACK_IN_X1000:<value>:TRAP_IN_X1000:<value>`
 - `STATUS:LANE:<lane>:DIAL_MS:<milliseconds>:PRESTAGE:<0|1>:STAGE:<0|1>:FOUL:<0|1>:FINISHED:<0|1>`
 - `EVENT:TREE:<state>`
 - `EVENT:LANE:<lane>:AMBER_<1|2|3>`

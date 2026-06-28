@@ -54,7 +54,7 @@ constexpr unsigned long MIN_DIAL_MS = 100;
 constexpr unsigned long MAX_DIAL_MS = 60000;
 constexpr unsigned long DEFAULT_DIAL_MS = 10000;
 constexpr uint8_t SERIAL_QUEUE_CAPACITY = 16;
-constexpr uint8_t SERIAL_FRAME_SIZE = 120;
+constexpr uint8_t SERIAL_FRAME_SIZE = 136;
 constexpr uint8_t MAX_SERIAL_INPUT_BYTES_PER_LOOP = 32;
 
 enum class RaceMode : uint8_t { HeadsUp, Bracket };
@@ -158,6 +158,7 @@ unsigned long speedTrapLengthInX1000 =
 
 RaceMode raceMode = RaceMode::HeadsUp;
 uint8_t activeLaneCount = MAX_LANE_COUNT;
+uint8_t heatLaneMask = 0x0F;
 TreeState treeState = TreeState::WaitingForAllLanes;
 unsigned long stateStartedAtMs = 0;
 unsigned long raceEpochMs = 0;
@@ -280,6 +281,25 @@ bool laneIsActive(const uint8_t lane) {
   return activeLaneCount == 4 || lane == 0 || lane == 3;
 }
 
+bool laneParticipates(const uint8_t lane) {
+  return laneIsActive(lane) && (heatLaneMask & (1U << lane)) != 0;
+}
+
+uint8_t defaultHeatLaneMask() {
+  return activeLaneCount == 4 ? 0x0F : 0x09;
+}
+
+void formatHeatLanes(char* destination, const size_t destinationSize) {
+  destination[0] = '\0';
+  for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
+    if (!laneParticipates(lane)) continue;
+    char laneText[4];
+    snprintf(laneText, sizeof(laneText), "%s%u",
+             destination[0] == '\0' ? "" : ",", lane + 1);
+    strncat(destination, laneText, destinationSize - strlen(destination) - 1);
+  }
+}
+
 const char* treeStateName() {
   switch (treeState) {
     case TreeState::WaitingForAllLanes:
@@ -297,9 +317,9 @@ const char* treeStateName() {
 }
 
 void calculateSlowestDial() {
-  slowestDialMs = dialMs[0];
-  for (uint8_t lane = 1; lane < MAX_LANE_COUNT; ++lane) {
-    if (!laneIsActive(lane)) continue;
+  slowestDialMs = 0;
+  for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
+    if (!laneParticipates(lane)) continue;
     if (dialMs[lane] > slowestDialMs) slowestDialMs = dialMs[lane];
   }
 }
@@ -311,7 +331,7 @@ unsigned long laneDelayMs(const uint8_t lane) {
 unsigned long latestLaneDelayMs() {
   unsigned long latestDelay = 0;
   for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
-    if (!laneIsActive(lane)) continue;
+    if (!laneParticipates(lane)) continue;
     const unsigned long delay = laneDelayMs(lane);
     if (delay > latestDelay) latestDelay = delay;
   }
@@ -356,7 +376,7 @@ void enterState(const TreeState newState, const unsigned long nowMs) {
 
 bool allLanesAreStaged() {
   for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
-    if (!laneIsActive(lane)) continue;
+    if (!laneParticipates(lane)) continue;
     if (!sensors[lane][PreStageSensor].isBlocked() ||
         !sensors[lane][StageSensor].isBlocked()) {
       return false;
@@ -367,7 +387,7 @@ bool allLanesAreStaged() {
 
 bool allLanesHaveResults() {
   for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
-    if (!laneIsActive(lane)) continue;
+    if (!laneParticipates(lane)) continue;
     if (!lanes[lane].fouled && !lanes[lane].finished) return false;
   }
   return true;
@@ -375,7 +395,7 @@ bool allLanesHaveResults() {
 
 bool allSensorsAreClear() {
   for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
-    if (!laneIsActive(lane)) continue;
+    if (!laneParticipates(lane)) continue;
     for (uint8_t sensor = 0; sensor < SENSORS_PER_LANE; ++sensor) {
       if (sensors[lane][sensor].isBlocked()) return false;
     }
@@ -385,7 +405,7 @@ bool allSensorsAreClear() {
 
 void updateStagingLights() {
   for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
-    const bool active = laneIsActive(lane);
+    const bool active = laneParticipates(lane);
     setLaneLight(
         lane,
         PreStageLight,
@@ -570,7 +590,7 @@ void reportWinner() {
       int8_t bestLane = -1;
       unsigned long bestFinishOffset = 0;
       for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
-        if (!laneIsActive(lane)) continue;
+        if (!laneParticipates(lane)) continue;
         if (used[lane] || lanes[lane].fouled || !lanes[lane].finished) continue;
         const unsigned long offset = lanes[lane].finishedAtUs - raceEpochUs;
         if (bestLane < 0 || offset < bestFinishOffset) {
@@ -594,7 +614,7 @@ void reportWinner() {
   bool legalFinisherExists = false;
 
   for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
-    if (!laneIsActive(lane)) continue;
+    if (!laneParticipates(lane)) continue;
     if (lanes[lane].fouled || !lanes[lane].finished ||
         !lanes[lane].elapsedAvailable) continue;
     const bool breakout = lanes[lane].elapsedUs < dialMs[lane] * 1000UL;
@@ -609,7 +629,7 @@ void reportWinner() {
 
   if (!legalFinisherExists) {
     for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
-      if (!laneIsActive(lane)) continue;
+      if (!laneParticipates(lane)) continue;
       if (lanes[lane].fouled || !lanes[lane].finished ||
           !lanes[lane].elapsedAvailable) continue;
       const unsigned long dialUs = dialMs[lane] * 1000UL;
@@ -631,14 +651,17 @@ void reportWinner() {
 }
 
 void sendStatus() {
-  char message[112];
+  char message[132];
+  char heatLanes[10];
+  formatHeatLanes(heatLanes, sizeof(heatLanes));
   snprintf(
       message,
       sizeof(message),
-      "STATUS:TREE:%s:MODE:%s:LANES:%u:TRACK_IN_X1000:%lu:TRAP_IN_X1000:%lu",
+      "STATUS:TREE:%s:MODE:%s:LANES:%u:HEAT_LANES:%s:TRACK_IN_X1000:%lu:TRAP_IN_X1000:%lu",
       treeStateName(),
       raceModeName(),
       activeLaneCount,
+      heatLanes,
       trackLengthInX1000,
       speedTrapLengthInX1000);
   sendProtocolMessage(message);
@@ -666,6 +689,7 @@ int8_t hexValue(const char value) {
 
 bool settingsCanChange() {
   return treeState == TreeState::WaitingForAllLanes ||
+         treeState == TreeState::ShowingResults ||
          treeState == TreeState::WaitingForClear;
 }
 
@@ -710,11 +734,42 @@ void processSetCommand(char* line) {
       return;
     }
     activeLaneCount = requestedCount;
+    heatLaneMask = defaultHeatLaneMask();
     turnOffRaceLights();
     updateStagingLights();
     char message[24];
     snprintf(
         message, sizeof(message), "ACK:SET:LANES:%u", activeLaneCount);
+    sendProtocolMessage(message);
+    return;
+  }
+
+  if (strcmp(setting, "HEAT_LANES") == 0 && value2 == nullptr) {
+    uint8_t requestedMask = 0;
+    char* laneSavePointer = nullptr;
+    char* laneText = strtok_r(value1, ",", &laneSavePointer);
+    while (laneText != nullptr) {
+      const unsigned long laneNumber = strtoul(laneText, nullptr, 10);
+      if (laneNumber < 1 || laneNumber > MAX_LANE_COUNT ||
+          !laneIsActive(laneNumber - 1) ||
+          (requestedMask & (1U << (laneNumber - 1))) != 0) {
+        sendProtocolMessage("ERROR:VALUE:HEAT_LANES");
+        return;
+      }
+      requestedMask |= 1U << (laneNumber - 1);
+      laneText = strtok_r(nullptr, ",", &laneSavePointer);
+    }
+    if (requestedMask == 0) {
+      sendProtocolMessage("ERROR:VALUE:HEAT_LANES");
+      return;
+    }
+    heatLaneMask = requestedMask;
+    turnOffRaceLights();
+    updateStagingLights();
+    char heatLanes[10];
+    char message[36];
+    formatHeatLanes(heatLanes, sizeof(heatLanes));
+    snprintf(message, sizeof(message), "ACK:SET:HEAT_LANES:%s", heatLanes);
     sendProtocolMessage(message);
     return;
   }
@@ -846,7 +901,7 @@ void updateSerialCommands() {
 void updateTree(const unsigned long nowMs) {
   if (treeState == TreeState::StagingHold) {
     for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
-      if (!laneIsActive(lane)) continue;
+      if (!laneParticipates(lane)) continue;
       if (!sensors[lane][StageSensor].isBlocked()) foulLane(lane);
     }
   }
@@ -864,7 +919,7 @@ void updateTree(const unsigned long nowMs) {
 
     case TreeState::RaceActive: {
       for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
-        if (!laneIsActive(lane)) continue;
+        if (!laneParticipates(lane)) continue;
         updateLaneTree(lane, nowMs);
         updateLaneRace(lane);
       }
@@ -878,7 +933,7 @@ void updateTree(const unsigned long nowMs) {
       } else if (nowMs - raceEpochMs >=
                  latestGreenDelay + MAX_RACE_TIME_MS) {
         for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
-          if (!laneIsActive(lane)) continue;
+          if (!laneParticipates(lane)) continue;
           if (!lanes[lane].fouled && !lanes[lane].finished) {
             char message[28];
             snprintf(
