@@ -80,6 +80,28 @@ var byeAdvancer = planner.SelectAdvancers(
     [new RunResult(1, RunLegality.RedLight, 1, -5000, null, true)]);
 AssertEqual(1L, byeAdvancer.Single().CarId);
 
+var laneChoiceEntries = cars.Take(4)
+    .Select((car, index) => new RoundEntry(car, index + 1, index + 1, false))
+    .ToArray();
+var laneChoices = new LaneChoiceSession(laneChoiceEntries, [1, 2, 3, 4]);
+laneChoices.Choose(1, 2);
+AssertEqual(2, laneChoices.GetLane(1));
+AssertEqual(1, laneChoices.GetLane(2));
+Assert(laneChoices.LockedLanes.Contains(2), "The first chosen lane should lock.");
+var protectedLaneRejected = false;
+try
+{
+    laneChoices.Choose(2, 2);
+}
+catch (InvalidOperationException)
+{
+    protectedLaneRejected = true;
+}
+Assert(protectedLaneRejected, "A later chooser must not take an earlier locked lane.");
+laneChoices.Choose(2, 3);
+AssertEqual(3, laneChoices.GetLane(2));
+AssertEqual(1, laneChoices.GetLane(3));
+
 var databasePath = Path.Combine(
     Path.GetTempPath(),
     $"dragWin-tests-{Guid.NewGuid():N}.db");

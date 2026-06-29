@@ -1,6 +1,8 @@
 # Tournament follow-up notes
 
-## Improve ordered lane choice
+## Ordered lane choice
+
+Implemented in the tournament runner.
 
 The current editable lane grid should become a sequential lane-choice workflow
 for rounds after the first:

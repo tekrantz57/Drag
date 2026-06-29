@@ -22,12 +22,19 @@ public sealed class TournamentRunnerForm : Form
         ScrollBars = ScrollBars.Vertical
     };
     private readonly Button sendHeatButton = new() { Text = "Send Heat to Controller", AutoSize = true };
+    private readonly Button confirmLaneChoiceButton = new()
+    {
+        Text = "Confirm Lane Choice",
+        AutoSize = true,
+        Visible = false
+    };
     private readonly Button confirmButton = new() { Text = "Confirm Results / Advance", AutoSize = true, Enabled = false };
     private RoundPlan round = null!;
     private HeatPlan heat = null!;
     private int heatIndex;
     private readonly Dictionary<int, LiveLaneResult> liveResults = [];
     private int nextFinishOrder = 1;
+    private LaneChoiceSession? laneChoiceSession;
 
     public TournamentRunnerForm(
         Tournament tournament,
@@ -62,13 +69,14 @@ public sealed class TournamentRunnerForm : Form
         lanesGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Status", HeaderText = "Status", ReadOnly = true });
 
         sendHeatButton.Click += (_, _) => SendHeat();
+        confirmLaneChoiceButton.Click += (_, _) => ConfirmLaneChoice();
         confirmButton.Click += (_, _) => ConfirmHeat();
         lanesGrid.DataError += LanesGridOnDataError;
         client.MessageReceived += ClientOnMessageReceived;
         FormClosed += (_, _) => client.MessageReceived -= ClientOnMessageReceived;
 
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true };
-        buttons.Controls.AddRange([sendHeatButton, confirmButton]);
+        buttons.Controls.AddRange([confirmLaneChoiceButton, sendHeatButton, confirmButton]);
         var split = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, SplitterDistance = 300 };
         split.Panel1.Controls.Add(lanesGrid);
         split.Panel2.Controls.Add(eventLog);
@@ -112,6 +120,102 @@ public sealed class TournamentRunnerForm : Form
             row.Tag = entry;
             liveResults[entry.LaneNumber] = new LiveLaneResult();
         }
+        InitializeLaneChoices();
+    }
+
+    private void InitializeLaneChoices()
+    {
+        if (round.RoundNumber <= 1)
+        {
+            laneChoiceSession = null;
+            confirmLaneChoiceButton.Visible = false;
+            foreach (DataGridViewRow row in lanesGrid.Rows)
+            {
+                row.Cells["Lane"].ReadOnly = true;
+                row.Cells["Status"].Value =
+                    ((RoundEntry)row.Tag!).IsBye
+                        ? "BYE PASS — random lane"
+                        : "Round-one random lane";
+            }
+            return;
+        }
+
+        laneChoiceSession = new LaneChoiceSession(
+            heat.Entries,
+            tournament.LaneCount == 2 ? [1, 4] : [1, 2, 3, 4]);
+        confirmLaneChoiceButton.Visible = true;
+        RefreshLaneChoiceGrid();
+    }
+
+    private void RefreshLaneChoiceGrid()
+    {
+        if (laneChoiceSession is null) return;
+
+        foreach (DataGridViewRow row in lanesGrid.Rows)
+        {
+            var entry = (RoundEntry)row.Tag!;
+            var cell = (DataGridViewComboBoxCell)row.Cells["Lane"];
+            var lane = laneChoiceSession.GetLane(entry.Car.Id);
+            cell.Value = null;
+            cell.Items.Clear();
+
+            if (laneChoiceSession.HasChosen(entry.Car.Id))
+            {
+                cell.Items.Add(lane);
+                cell.ReadOnly = true;
+                row.Cells["Status"].Value = "Lane choice locked";
+            }
+            else
+            {
+                foreach (var availableLane in laneChoiceSession.AvailableLanes)
+                {
+                    cell.Items.Add(availableLane);
+                }
+                cell.ReadOnly = laneChoiceSession.CurrentCarId != entry.Car.Id;
+                row.Cells["Status"].Value =
+                    cell.ReadOnly ? "Waiting for earlier chooser" : "Choose lane now";
+            }
+            cell.Value = lane;
+        }
+
+        confirmLaneChoiceButton.Enabled = !laneChoiceSession.IsComplete;
+        confirmLaneChoiceButton.Text = laneChoiceSession.IsComplete
+            ? "Lane Choices Complete"
+            : "Confirm Current Lane Choice";
+    }
+
+    private void ConfirmLaneChoice()
+    {
+        if (laneChoiceSession?.CurrentCarId is not long carId) return;
+        lanesGrid.EndEdit();
+        var row = lanesGrid.Rows.Cast<DataGridViewRow>()
+            .Single(item => ((RoundEntry)item.Tag!).Car.Id == carId);
+        if (!int.TryParse(row.Cells["Lane"].Value?.ToString(), out var selectedLane))
+        {
+            MessageBox.Show(this, "Select an available lane.", Text);
+            return;
+        }
+
+        var originalLane = laneChoiceSession.GetLane(carId);
+        var displaced = laneChoiceSession.Assignments
+            .Where(item => item.Key != carId && item.Value == selectedLane)
+            .Select(item => (long?)item.Key)
+            .SingleOrDefault();
+        try
+        {
+            laneChoiceSession.Choose(carId, selectedLane);
+        }
+        catch (InvalidOperationException exception)
+        {
+            MessageBox.Show(this, exception.Message, Text);
+            return;
+        }
+
+        var chooser = ((RoundEntry)row.Tag!).Car.DisplayName;
+        Append(displaced.HasValue
+            ? $"{chooser} chose lane {selectedLane}; displaced car moved to lane {originalLane}."
+            : $"{chooser} chose lane {selectedLane}.");
+        RefreshLaneChoiceGrid();
     }
 
     private void SendHeat()
@@ -119,6 +223,11 @@ public sealed class TournamentRunnerForm : Form
         if (!client.IsConnected)
         {
             MessageBox.Show(this, "Connect to the controller first.", Text);
+            return;
+        }
+        if (laneChoiceSession is { IsComplete: false })
+        {
+            MessageBox.Show(this, "Complete the ordered lane choices first.", Text);
             return;
         }
 
@@ -183,7 +292,8 @@ public sealed class TournamentRunnerForm : Form
         {
             if (!IsDisposed && rowIndex < lanesGrid.Rows.Count)
             {
-                lanesGrid.Rows[rowIndex].Cells["Lane"].Value = entry.LaneNumber;
+                lanesGrid.Rows[rowIndex].Cells["Lane"].Value =
+                    laneChoiceSession?.GetLane(entry.Car.Id) ?? entry.LaneNumber;
             }
         });
         Append(
