@@ -13,13 +13,19 @@ public sealed class DragSerialClient : IDisposable
     private readonly SerialLog log = new();
     private SerialPort? serialPort;
     private bool discardingOversizedLine;
-    private string? lastTreeEventLine;
+    private string? lastTreeEventSignature;
     private long lastTreeEventAtMs;
 
     public event EventHandler<ProtocolMessage>? MessageReceived;
     public event EventHandler<string>? ProtocolError;
 
     public string LogPath => log.Path;
+
+    public DateTimeOffset? LastFrameReceivedAt { get; private set; }
+
+    public DateTimeOffset? LastHelloReceivedAt { get; private set; }
+
+    public DateTimeOffset? LastHeartbeatReceivedAt { get; private set; }
 
     public bool IsConnected
     {
@@ -61,7 +67,10 @@ public sealed class DragSerialClient : IDisposable
                 port.DiscardInBuffer();
                 port.DataReceived += SerialPortOnDataReceived;
                 ResetReceiveBuffer();
-                lastTreeEventLine = null;
+                LastFrameReceivedAt = null;
+                LastHelloReceivedAt = null;
+                LastHeartbeatReceivedAt = null;
+                lastTreeEventSignature = null;
                 lastTreeEventAtMs = 0;
                 serialPort = port;
                 log.Info($"serial port open on {portName} at {baudRate} baud");
@@ -190,6 +199,7 @@ public sealed class DragSerialClient : IDisposable
         log.Raw(line);
         if (ProtocolMessage.TryParse(line, out var message, out var error))
         {
+            UpdateControllerPresence(message!);
             if (!IsDuplicateTreeEvent(line, message!))
             {
                 MessageReceived?.Invoke(this, message!);
@@ -201,6 +211,19 @@ public sealed class DragSerialClient : IDisposable
         ProtocolError?.Invoke(this, $"{error} Raw line: {line}");
     }
 
+    private void UpdateControllerPresence(ProtocolMessage message)
+    {
+        LastFrameReceivedAt = DateTimeOffset.Now;
+        if (message.Type == "HELLO")
+        {
+            LastHelloReceivedAt = LastFrameReceivedAt;
+        }
+        else if (message.Type == "HEARTBEAT")
+        {
+            LastHeartbeatReceivedAt = LastFrameReceivedAt;
+        }
+    }
+
     private bool IsDuplicateTreeEvent(string line, ProtocolMessage message)
     {
         if (message.Parts.Count < 2 ||
@@ -210,14 +233,30 @@ public sealed class DragSerialClient : IDisposable
             return false;
         }
 
+        var signature = MessageSignatureWithoutMetadata(message);
         var nowMs = Environment.TickCount64;
         var duplicate =
-            line == lastTreeEventLine &&
+            signature == lastTreeEventSignature &&
             nowMs - lastTreeEventAtMs <= 500;
 
-        lastTreeEventLine = line;
+        lastTreeEventSignature = signature;
         lastTreeEventAtMs = nowMs;
         return duplicate;
+    }
+
+    private static string MessageSignatureWithoutMetadata(ProtocolMessage message)
+    {
+        var metadataStart = message.Parts.Count;
+        for (var index = 0; index < message.Parts.Count; index++)
+        {
+            if (message.Parts[index] is "SEQ" or "MS")
+            {
+                metadataStart = index;
+                break;
+            }
+        }
+
+        return string.Join(':', message.Parts.Take(metadataStart));
     }
 
     private void DisconnectCore()
@@ -237,7 +276,10 @@ public sealed class DragSerialClient : IDisposable
         serialPort.Dispose();
         serialPort = null;
         ResetReceiveBuffer();
-        lastTreeEventLine = null;
+        LastFrameReceivedAt = null;
+        LastHelloReceivedAt = null;
+        LastHeartbeatReceivedAt = null;
+        lastTreeEventSignature = null;
         lastTreeEventAtMs = 0;
         log.Info($"serial port closed on {portName}");
     }

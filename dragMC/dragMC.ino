@@ -6,6 +6,9 @@ namespace {
 constexpr uint8_t MAX_LANE_COUNT = 4;
 constexpr uint8_t LIGHTS_PER_LANE = 7;
 constexpr uint8_t SENSORS_PER_LANE = 4;
+constexpr char FIRMWARE_NAME[] = "DRAG_MC";
+constexpr char FIRMWARE_VERSION[] = "0.2.0";
+constexpr uint8_t PROTOCOL_VERSION = 2;
 
 enum LightIndex : uint8_t {
   PreStageLight,
@@ -56,6 +59,7 @@ constexpr unsigned long DEFAULT_DIAL_MS = 10000;
 constexpr uint8_t SERIAL_QUEUE_CAPACITY = 16;
 constexpr uint8_t SERIAL_FRAME_SIZE = 136;
 constexpr uint8_t MAX_SERIAL_INPUT_BYTES_PER_LOOP = 32;
+constexpr unsigned long HEARTBEAT_INTERVAL_MS = 1000;
 
 enum class RaceMode : uint8_t { HeadsUp, Bracket };
 enum class TreeState : uint8_t {
@@ -170,6 +174,11 @@ uint8_t serialQueueTail = 0;
 uint8_t serialQueueCount = 0;
 uint8_t serialHeadOffset = 0;
 unsigned int droppedSerialMessageCount = 0;
+uint32_t protocolSequence = 0;
+unsigned long lastHeartbeatAtMs = 0;
+
+void formatHeatLanes(char* destination, const size_t destinationSize);
+const char* treeStateName();
 
 uint8_t calculateChecksum(const char* payload) {
   uint8_t checksum = 0;
@@ -177,6 +186,11 @@ uint8_t calculateChecksum(const char* payload) {
     checksum ^= static_cast<uint8_t>(*payload++);
   }
   return checksum;
+}
+
+bool messageGetsSequenceMetadata(const char* payload) {
+  return strncmp(payload, "EVENT:", 6) == 0 ||
+         strncmp(payload, "RESULT:", 7) == 0;
 }
 
 void sendProtocolMessage(const char* payload) {
@@ -187,15 +201,62 @@ void sendProtocolMessage(const char* payload) {
     return;
   }
 
-  const uint8_t checksum = calculateChecksum(payload);
+  char sequencedPayload[SERIAL_FRAME_SIZE - 4];
+  const char* payloadToSend = payload;
+  if (messageGetsSequenceMetadata(payload)) {
+    snprintf(
+        sequencedPayload,
+        sizeof(sequencedPayload),
+        "%s:SEQ:%lu:MS:%lu",
+        payload,
+        static_cast<unsigned long>(++protocolSequence),
+        millis());
+    payloadToSend = sequencedPayload;
+  }
+
+  const uint8_t checksum = calculateChecksum(payloadToSend);
   snprintf(
       serialOutputQueue[serialQueueTail],
       SERIAL_FRAME_SIZE,
       "%s:%02X\n",
-      payload,
+      payloadToSend,
       checksum);
   serialQueueTail = (serialQueueTail + 1) % SERIAL_QUEUE_CAPACITY;
   ++serialQueueCount;
+}
+
+void sendHello() {
+  char heatLanes[10];
+  char message[112];
+  formatHeatLanes(heatLanes, sizeof(heatLanes));
+  snprintf(
+      message,
+      sizeof(message),
+      "HELLO:%s:%s:PROTO:%u:MCU:MEGA2560:LANES:%u:HEAT_LANES:%s",
+      FIRMWARE_NAME,
+      FIRMWARE_VERSION,
+      PROTOCOL_VERSION,
+      activeLaneCount,
+      heatLanes);
+  sendProtocolMessage(message);
+}
+
+void sendHeartbeat(const unsigned long nowMs) {
+  char message[80];
+  snprintf(
+      message,
+      sizeof(message),
+      "HEARTBEAT:%lu:SEQ:%lu:STATE:%s",
+      nowMs,
+      static_cast<unsigned long>(protocolSequence),
+      treeStateName());
+  sendProtocolMessage(message);
+}
+
+void updateHeartbeat(const unsigned long nowMs) {
+  if (nowMs - lastHeartbeatAtMs < HEARTBEAT_INTERVAL_MS) return;
+  lastHeartbeatAtMs = nowMs;
+  sendHeartbeat(nowMs);
 }
 
 void queueDroppedMessageWarning() {
@@ -977,6 +1038,7 @@ void setup() {
     }
   }
   const unsigned long nowMs = millis();
+  sendHello();
   enterState(TreeState::WaitingForAllLanes, nowMs);
   updateStagingLights();
 }
@@ -991,5 +1053,6 @@ void loop() {
   updateSerialCommands();
   updateStagingLights();
   updateTree(nowMs);
+  updateHeartbeat(nowMs);
   serviceSerialOutput();
 }

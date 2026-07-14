@@ -19,7 +19,8 @@ public sealed record RoundEntry(
     Car Car,
     int LaneNumber,
     int LaneChoiceOrder,
-    bool IsBye);
+    bool IsBye,
+    int DialMilliseconds);
 
 public sealed record HeatPlan(
     int HeatNumber,
@@ -46,3 +47,32 @@ public sealed record RunResult(
     long? ReactionMicroseconds,
     long? BreakoutMicroseconds,
     bool IsBye);
+
+public sealed record TournamentReport(
+    Tournament Tournament,
+    string Status,
+    DateTimeOffset CreatedAt,
+    IReadOnlyList<TournamentReportRow> Rows)
+{
+    public TournamentReportRow? Winner => Rows
+        .Where(row => row.Advanced)
+        .OrderByDescending(row => row.RoundNumber)
+        .ThenBy(row => row.FinishOrder)
+        .FirstOrDefault();
+}
+
+public sealed record TournamentReportRow(
+    int RoundNumber,
+    int HeatNumber,
+    int LaneNumber,
+    int LaneChoiceOrder,
+    string RacerName,
+    string CarName,
+    int DialMilliseconds,
+    bool IsBye,
+    RunLegality? Legality,
+    int? FinishOrder,
+    long? ReactionMicroseconds,
+    long? BreakoutMicroseconds,
+    bool Advanced,
+    DateTimeOffset? ConfirmedAt);

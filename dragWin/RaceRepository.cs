@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.Data.Sqlite;
 
 namespace DragWin;
@@ -118,7 +119,8 @@ public sealed class RaceRepository
             """
             SELECT h.id, h.heat_number, h.advance_count,
                    c.id, c.racer_id, r.name, c.name, c.default_dial_ms,
-                   te.bye_count, he.lane_number, he.lane_choice_order, he.is_bye
+                   te.bye_count, he.lane_number, he.lane_choice_order, he.is_bye,
+                   he.dial_ms
             FROM heats h
             JOIN heat_entries he ON he.heat_id = h.id
             JOIN tournament_entries te ON te.id = he.tournament_entry_id
@@ -143,7 +145,8 @@ public sealed class RaceRepository
                         reader.GetInt32(7), reader.GetInt32(8)),
                     reader.GetInt32(9),
                     reader.GetInt32(10),
-                    reader.GetInt32(11) != 0)));
+                    reader.GetInt32(11) != 0,
+                    reader.GetInt32(12))));
         }
         return new RoundPlan(
             roundNumber,
@@ -208,6 +211,50 @@ public sealed class RaceRepository
             command.Parameters.AddWithValue("$round", roundNumber);
             command.Parameters.AddWithValue("$heat", heatNumber);
             command.Parameters.AddWithValue("$car", assignment.Key);
+            command.ExecuteNonQuery();
+        }
+        transaction.Commit();
+    }
+
+    public void UpdateHeatDialOverrides(
+        long tournamentId,
+        int roundNumber,
+        int heatNumber,
+        IReadOnlyDictionary<long, int> dialMillisecondsByCarId)
+    {
+        using var connection = OpenConnection();
+        using var transaction = connection.BeginTransaction();
+        foreach (var overrideDial in dialMillisecondsByCarId)
+        {
+            if (overrideDial.Value is < 100 or > 60000)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(dialMillisecondsByCarId),
+                    "Dial-in must be between 0.100 and 60.000 seconds.");
+            }
+
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText =
+                """
+                UPDATE heat_entries
+                SET dial_ms = $dial
+                WHERE id = (
+                    SELECT he.id FROM heat_entries he
+                    JOIN heats h ON h.id = he.heat_id
+                    JOIN rounds ro ON ro.id = h.round_id
+                    JOIN tournament_entries te ON te.id = he.tournament_entry_id
+                    WHERE ro.tournament_id = $tournament
+                      AND ro.round_number = $round
+                      AND h.heat_number = $heat
+                      AND te.car_id = $car
+                );
+                """;
+            command.Parameters.AddWithValue("$dial", overrideDial.Value);
+            command.Parameters.AddWithValue("$tournament", tournamentId);
+            command.Parameters.AddWithValue("$round", roundNumber);
+            command.Parameters.AddWithValue("$heat", heatNumber);
+            command.Parameters.AddWithValue("$car", overrideDial.Key);
             command.ExecuteNonQuery();
         }
         transaction.Commit();
@@ -361,6 +408,93 @@ public sealed class RaceRepository
         return (cars, reactions);
     }
 
+    public TournamentReport GetTournamentReport(long tournamentId)
+    {
+        using var connection = OpenConnection();
+        using var tournamentCommand = connection.CreateCommand();
+        tournamentCommand.CommandText =
+            """
+            SELECT id, name, lane_count, status, created_utc
+            FROM tournaments
+            WHERE id = $tournament;
+            """;
+        tournamentCommand.Parameters.AddWithValue("$tournament", tournamentId);
+        using var tournamentReader = tournamentCommand.ExecuteReader();
+        if (!tournamentReader.Read())
+        {
+            throw new InvalidOperationException("Tournament not found.");
+        }
+
+        var tournament = new Tournament(
+            tournamentReader.GetInt64(0),
+            tournamentReader.GetString(1),
+            tournamentReader.GetInt32(2));
+        var status = tournamentReader.GetString(3);
+        var createdAt = DateTimeOffset.Parse(
+            tournamentReader.GetString(4),
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.RoundtripKind);
+        tournamentReader.Close();
+
+        using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            SELECT ro.round_number, h.heat_number, he.lane_number,
+                   he.lane_choice_order, r.name, c.name, he.dial_ms,
+                   he.is_bye, hr.legality, hr.finish_order, hr.reaction_us,
+                   hr.breakout_us, hr.advanced, hc.confirmed_utc
+            FROM rounds ro
+            JOIN heats h ON h.round_id = ro.id
+            JOIN heat_entries he ON he.heat_id = h.id
+            JOIN tournament_entries te ON te.id = he.tournament_entry_id
+            JOIN cars c ON c.id = te.car_id
+            JOIN racers r ON r.id = c.racer_id
+            LEFT JOIN heat_results hr ON hr.heat_entry_id = he.id
+            LEFT JOIN heat_confirmations hc ON hc.heat_id = h.id
+            WHERE ro.tournament_id = $tournament
+            ORDER BY ro.round_number, h.heat_number, he.lane_number;
+            """;
+        command.Parameters.AddWithValue("$tournament", tournamentId);
+        using var reader = command.ExecuteReader();
+        var rows = new List<TournamentReportRow>();
+        while (reader.Read())
+        {
+            RunLegality? legality = null;
+            if (!reader.IsDBNull(8) &&
+                Enum.TryParse<RunLegality>(reader.GetString(8), out var parsedLegality))
+            {
+                legality = parsedLegality;
+            }
+
+            DateTimeOffset? confirmedAt = null;
+            if (!reader.IsDBNull(13))
+            {
+                confirmedAt = DateTimeOffset.Parse(
+                    reader.GetString(13),
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.RoundtripKind);
+            }
+
+            rows.Add(new TournamentReportRow(
+                reader.GetInt32(0),
+                reader.GetInt32(1),
+                reader.GetInt32(2),
+                reader.GetInt32(3),
+                reader.GetString(4),
+                reader.GetString(5),
+                reader.GetInt32(6),
+                reader.GetInt32(7) != 0,
+                legality,
+                reader.IsDBNull(9) ? null : reader.GetInt32(9),
+                reader.IsDBNull(10) ? null : reader.GetInt64(10),
+                reader.IsDBNull(11) ? null : reader.GetInt64(11),
+                !reader.IsDBNull(12) && reader.GetInt32(12) != 0,
+                confirmedAt));
+        }
+
+        return new TournamentReport(tournament, status, createdAt, rows);
+    }
+
     public Racer AddRacer(string name)
     {
         name = RequiredName(name, nameof(name));
@@ -398,6 +532,56 @@ public sealed class RaceRepository
         var id = (long)command.ExecuteScalar()!;
         var racer = GetRacers().Single(item => item.Id == racerId);
         return new Car(id, racerId, racer.Name, name, defaultDialMilliseconds);
+    }
+
+    public Car UpdateCar(
+        long carId,
+        long racerId,
+        string name,
+        int defaultDialMilliseconds)
+    {
+        name = RequiredName(name, nameof(name));
+        if (defaultDialMilliseconds is < 100 or > 60000)
+        {
+            throw new ArgumentOutOfRangeException(nameof(defaultDialMilliseconds));
+        }
+
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            UPDATE cars
+            SET racer_id = $racer, name = $name, default_dial_ms = $dial
+            WHERE id = $car AND active = 1;
+            """;
+        command.Parameters.AddWithValue("$racer", racerId);
+        command.Parameters.AddWithValue("$name", name);
+        command.Parameters.AddWithValue("$dial", defaultDialMilliseconds);
+        command.Parameters.AddWithValue("$car", carId);
+        if (command.ExecuteNonQuery() != 1)
+        {
+            throw new InvalidOperationException("The selected car could not be updated.");
+        }
+
+        var racer = GetRacers().Single(item => item.Id == racerId);
+        return new Car(carId, racerId, racer.Name, name, defaultDialMilliseconds);
+    }
+
+    public void RetireCar(long carId)
+    {
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            UPDATE cars
+            SET active = 0
+            WHERE id = $car AND active = 1;
+            """;
+        command.Parameters.AddWithValue("$car", carId);
+        if (command.ExecuteNonQuery() != 1)
+        {
+            throw new InvalidOperationException("The selected car could not be retired.");
+        }
     }
 
     public Tournament CreateTournament(
@@ -489,8 +673,8 @@ public sealed class RaceRepository
                     """
                     INSERT INTO heat_entries(
                         heat_id, tournament_entry_id, lane_number,
-                        lane_choice_order, is_bye)
-                    SELECT $heat, id, $lane, $choice, $bye
+                        lane_choice_order, is_bye, dial_ms)
+                    SELECT $heat, id, $lane, $choice, $bye, $dial
                     FROM tournament_entries
                     WHERE tournament_id = $tournament AND car_id = $car;
 
@@ -502,6 +686,7 @@ public sealed class RaceRepository
                 entryCommand.Parameters.AddWithValue("$lane", entry.LaneNumber);
                 entryCommand.Parameters.AddWithValue("$choice", entry.LaneChoiceOrder);
                 entryCommand.Parameters.AddWithValue("$bye", entry.IsBye ? 1 : 0);
+                entryCommand.Parameters.AddWithValue("$dial", entry.DialMilliseconds);
                 entryCommand.Parameters.AddWithValue("$tournament", tournamentId);
                 entryCommand.Parameters.AddWithValue("$car", entry.Car.Id);
                 entryCommand.ExecuteNonQuery();
@@ -569,6 +754,7 @@ public sealed class RaceRepository
                 lane_number INTEGER NOT NULL,
                 lane_choice_order INTEGER NOT NULL,
                 is_bye INTEGER NOT NULL CHECK(is_bye IN (0, 1)),
+                dial_ms INTEGER NOT NULL DEFAULT 10000 CHECK(dial_ms BETWEEN 100 AND 60000),
                 UNIQUE(heat_id, tournament_entry_id),
                 UNIQUE(heat_id, lane_number)
             );
@@ -584,8 +770,54 @@ public sealed class RaceRepository
                 heat_id INTEGER PRIMARY KEY REFERENCES heats(id),
                 confirmed_utc TEXT NOT NULL
             );
-            PRAGMA user_version = 2;
             """;
+        command.ExecuteNonQuery();
+        EnsureHeatEntryDialColumn(connection);
+        SetUserVersion(connection, 3);
+    }
+
+    private static void EnsureHeatEntryDialColumn(SqliteConnection connection)
+    {
+        using var checkCommand = connection.CreateCommand();
+        checkCommand.CommandText = "PRAGMA table_info(heat_entries);";
+        using (var reader = checkCommand.ExecuteReader())
+        {
+            while (reader.Read())
+            {
+                if (string.Equals(reader.GetString(1), "dial_ms", StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+            }
+        }
+
+        using var alterCommand = connection.CreateCommand();
+        alterCommand.CommandText =
+            """
+            ALTER TABLE heat_entries
+            ADD COLUMN dial_ms INTEGER NOT NULL DEFAULT 10000
+            CHECK(dial_ms BETWEEN 100 AND 60000);
+            """;
+        alterCommand.ExecuteNonQuery();
+
+        using var backfillCommand = connection.CreateCommand();
+        backfillCommand.CommandText =
+            """
+            UPDATE heat_entries
+            SET dial_ms = (
+                SELECT c.default_dial_ms
+                FROM tournament_entries te
+                JOIN cars c ON c.id = te.car_id
+                WHERE te.id = heat_entries.tournament_entry_id
+            );
+            """;
+        backfillCommand.ExecuteNonQuery();
+    }
+
+    private static void SetUserVersion(SqliteConnection connection, int version)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = $"PRAGMA user_version = {version};";
         command.ExecuteNonQuery();
     }
 

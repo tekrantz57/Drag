@@ -62,7 +62,10 @@ public sealed class TournamentPlanner
         var heats = bestCandidate!
             .Select((heatCars, heatIndex) =>
             {
-                var isByeHeat = heatCars.Count <= advanceCount;
+                var heatAdvanceCount = heatCount == 1 && heatCars.Count <= advanceCount
+                    ? 1
+                    : advanceCount;
+                var isByeHeat = heatCars.Count <= heatAdvanceCount;
                 var laneOrder = physicalLanes.OrderBy(_ => random.Next()).ToArray();
                 var choiceOrder = OrderForLaneChoice(
                     heatCars,
@@ -75,10 +78,11 @@ public sealed class TournamentPlanner
                         car,
                         laneOrder[index],
                         index + 1,
-                        isByeHeat))
+                        isByeHeat,
+                        car.DefaultDialMilliseconds))
                     .ToArray();
 
-                return new HeatPlan(heatIndex + 1, advanceCount, entries);
+                return new HeatPlan(heatIndex + 1, heatAdvanceCount, entries);
             })
             .ToArray();
 

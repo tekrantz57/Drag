@@ -51,6 +51,8 @@ for the track to clear.
 
 ## Controller-to-Windows messages
 
+- `HELLO:DRAG_MC:<firmware-version>:PROTO:<protocol-version>:MCU:MEGA2560:LANES:<2|4>:HEAT_LANES:<list>`
+- `HEARTBEAT:<controller-millis>:SEQ:<last-event-sequence>:STATE:<state>`
 - `ACK:PING`
 - `ACK:RESET`
 - `ACK:SET:LANES:<2|4>`
@@ -78,3 +80,13 @@ for the track to clear.
 - `ERROR:COMMAND:<command>`
 - `ERROR:STATE:RACE_ACTIVE`
 - `ERROR:VALUE:<setting>`
+
+`EVENT` and `RESULT` frames include trailing metadata:
+
+```text
+:SEQ:<sequence>:MS:<controller-millis>
+```
+
+The sequence number increments for each `EVENT` or `RESULT` frame and resets
+when the controller resets. Windows should treat these fields as metadata; the
+race meaning is still in the leading fields.

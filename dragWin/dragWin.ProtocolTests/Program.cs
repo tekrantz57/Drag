@@ -17,6 +17,13 @@ Assert(
     "A distance command should round-trip.");
 AssertEqual("660000", distancesMessage!.Parts[2]);
 AssertEqual("12000", distancesMessage.Parts[3]);
+var eventWithMetadata = ProtocolMessage.Create(
+    "EVENT", "LANE", "1", "GREEN", "SEQ", "42", "MS", "123456").Encode();
+Assert(
+    ProtocolMessage.TryParse(eventWithMetadata, out var eventMessage, out _),
+    "An event with sequence and controller timestamp metadata should parse.");
+AssertEqual("GREEN", eventMessage!.Parts[3]);
+AssertEqual("42", eventMessage.Parts[5]);
 
 Assert(
     ProtocolMessage.TryParse("STATUS:TREE:GREEN:49", out var message, out _),
@@ -53,12 +60,18 @@ Assert(
     plannedRound.Heats.Single(heat => heat.Entries.Count == 2)
         .Entries.All(entry => entry.IsBye),
     "A heat with no eliminations should consist of BYE passes.");
+var finalRound = planner.CreateRound(cars.Take(2).ToArray(), 4, 2, randomSeed: 12345);
+AssertEqual(1, finalRound.Heats.Single().AdvanceCount);
+Assert(
+    finalRound.Heats.Single().Entries.All(entry => !entry.IsBye),
+    "A two-car final in a four-lane tournament should be raced, not treated as a BYE heat.");
 
 var competitiveHeat = new HeatPlan(
     1,
     2,
     cars.Take(4)
-        .Select((car, index) => new RoundEntry(car, index + 1, index + 1, false))
+        .Select((car, index) => new RoundEntry(
+            car, index + 1, index + 1, false, car.DefaultDialMilliseconds))
         .ToArray());
 var advancers = planner.SelectAdvancers(
     competitiveHeat,
@@ -74,14 +87,32 @@ AssertEqual(3L, advancers[1].CarId);
 var byeHeat = new HeatPlan(
     1,
     1,
-    [new RoundEntry(cars[0], 1, 1, true)]);
+    [new RoundEntry(cars[0], 1, 1, true, cars[0].DefaultDialMilliseconds)]);
 var byeAdvancer = planner.SelectAdvancers(
     byeHeat,
     [new RunResult(1, RunLegality.RedLight, 1, -5000, null, true)]);
 AssertEqual(1L, byeAdvancer.Single().CarId);
+var demoMessages = DemoHeatSimulator.CreateBracketHeatMessages(competitiveHeat, randomSeed: 7);
+Assert(
+    demoMessages.Any(item => item.Type == "EVENT" && item.Parts[1] == "TREE" && item.Parts[2] == "RACE_COMPLETE"),
+    "A demo heat should complete the tree.");
+Assert(
+    demoMessages.Any(item => item.Type == "RESULT" && item.Parts[1] == "WINNER"),
+    "A demo heat should report a winner when at least one car makes a legal or breakout pass.");
+Assert(
+    demoMessages.Any(item => item.Type == "RESULT" && item.Parts.Count > 3 && item.Parts[3] == "SPEED_MPH_X100"),
+    "A demo heat should include speed-trap output.");
+var demoByeMessages = DemoHeatSimulator.CreateBracketHeatMessages(byeHeat, randomSeed: 7);
+Assert(
+    demoByeMessages.Any(item => item.Type == "EVENT" && item.Parts.Count > 3 && item.Parts[3] == "REACTION_US"),
+    "A demo BYE pass should still produce a reaction time.");
+Assert(
+    demoByeMessages.All(item => !(item.Type == "EVENT" && item.Parts.Count > 3 && item.Parts[3] == "FOUL")),
+    "A demo BYE pass should not red-light.");
 
 var laneChoiceEntries = cars.Take(4)
-    .Select((car, index) => new RoundEntry(car, index + 1, index + 1, false))
+    .Select((car, index) => new RoundEntry(
+        car, index + 1, index + 1, false, car.DefaultDialMilliseconds))
     .ToArray();
 var laneChoices = new LaneChoiceSession(laneChoiceEntries, [1, 2, 3, 4]);
 laneChoices.Choose(1, 2);
@@ -110,6 +141,9 @@ try
     var repository = new RaceRepository(databasePath);
     var racer = repository.AddRacer("Test Racer");
     var car = repository.AddCar(racer.Id, "Test Car", 7500);
+    car = repository.UpdateCar(car.Id, racer.Id, "Test Car Updated", 7600);
+    AssertEqual("Test Car Updated", car.Name);
+    AssertEqual(7600, car.DefaultDialMilliseconds);
     AssertEqual(1, repository.GetRacers().Count);
     AssertEqual(1, repository.GetCars().Count);
     var tournament = repository.CreateTournament(
@@ -118,9 +152,15 @@ try
         [car.Id]);
     var firstRound = planner.CreateRound([car], 2, 1, randomSeed: 44);
     repository.SaveRound(tournament.Id, firstRound);
+    repository.UpdateHeatDialOverrides(tournament.Id, 1, 1, new Dictionary<long, int>
+    {
+        [car.Id] = 8100
+    });
     var loadedRound = repository.GetLatestRound(tournament.Id);
     AssertEqual(1, loadedRound.Heats.Count);
     var persistedHeat = loadedRound.Heats.Single();
+    AssertEqual(8100, persistedHeat.Entries.Single().DialMilliseconds);
+    AssertEqual(7600, persistedHeat.Entries.Single().Car.DefaultDialMilliseconds);
     var persistedResult = new RunResult(
         car.Id, RunLegality.RedLight, 1, -1000, null, true);
     repository.SaveHeatResults(
@@ -132,6 +172,17 @@ try
     Assert(repository.IsRoundConfirmed(tournament.Id, 1), "The saved heat should confirm the round.");
     var persistedAdvancers = repository.GetRoundAdvancers(tournament.Id, 1);
     AssertEqual(car.Id, persistedAdvancers.Cars.Single().Id);
+    repository.CompleteTournament(tournament.Id);
+    var report = repository.GetTournamentReport(tournament.Id);
+    AssertEqual("Test Tournament", report.Tournament.Name);
+    AssertEqual("COMPLETE", report.Status);
+    AssertEqual("Test Racer", report.Winner?.RacerName);
+    AssertEqual("Test Car Updated", report.Winner?.CarName);
+    AssertEqual(1, report.Rows.Count);
+    AssertEqual("RedLight", report.Rows.Single().Legality?.ToString());
+    Assert(report.Rows.Single().Advanced, "The report should mark the advancing car.");
+    repository.RetireCar(car.Id);
+    AssertEqual(0, repository.GetCars().Count);
 }
 finally
 {
