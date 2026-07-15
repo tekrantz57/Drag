@@ -46,7 +46,9 @@ constexpr unsigned long DEFAULT_SPEED_TRAP_LENGTH_IN_X1000 = 12000;
 constexpr unsigned long MIN_TRACK_LENGTH_IN_X1000 = 1000;
 constexpr unsigned long MAX_TRACK_LENGTH_IN_X1000 = 10000000;
 constexpr unsigned long MIN_SPEED_TRAP_LENGTH_IN_X1000 = 100;
-constexpr bool SENSOR_IS_ACTIVE_LOW = true;
+// LM393 slot sensors used on this track drive the digital output HIGH when the
+// beam is blocked and LOW when it is clear.
+constexpr bool SENSOR_IS_ACTIVE_LOW = false;
 constexpr unsigned long SENSOR_DEBOUNCE_MS = 2;
 constexpr unsigned long STAGING_HOLD_MS = 500;
 constexpr unsigned long AMBER_INTERVAL_MS = 500;
