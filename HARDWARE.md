@@ -6,6 +6,12 @@
 - USB serial connection to the Windows app at 115200 baud.
 - Firmware sketch: `dragMC/dragMC.ino`.
 
+James Cleave shared a reference test rig for a similar slot-car sensor project
+that also used an Arduino Mega with multiple LM393 slot sensor boards on a
+breadboard. That corroborates the Mega choice for this project: enough I/O for
+many lane sensors and tree lights, straightforward USB serial, and simple
+bench-testing before committing to permanent track wiring.
+
 ## Sensor Polarity
 
 The LM393 slot sensors used on this track are active-HIGH:
