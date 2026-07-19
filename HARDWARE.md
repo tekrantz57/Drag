@@ -56,6 +56,29 @@ LM393 GND  ---------------- Mega/controller GND
 Keep sensor cables separated from track power, motor feeds, and high-current
 tree-light wiring where practical.
 
+## Optional Sensor-board Modification
+
+James Cleave reported using a similar LM393 slot sensor board with a small
+hardware change to improve detection of white or yellow guide flags. The change
+shown in the reference photo replaces or bypasses a small surface-mount resistor
+near the slotted opto sensor with a through-hole 330 ohm resistor.
+
+Treat this as a field-proven troubleshooting option, not as the default build
+until the exact board revision and resistor position are confirmed. Before
+modifying all sensors:
+
+1. Trace or photograph the board and confirm which SMD resistor is being
+   replaced.
+2. Modify one spare sensor first.
+3. Verify the modified sensor in the Windows `Test Sensors` window with black,
+   white, and yellow guide flags.
+4. Compare the trigger point and stability against an unmodified sensor.
+
+This 330 ohm board modification is separate from the 10k Mega input pulldown.
+The pulldown defines the controller input when the sensor is not driving the
+line; the 330 ohm change appears to alter the sensor board's optical/electrical
+behavior.
+
 ## Sensor Pin Map
 
 Each lane currently has four sensors: pre-stage, stage, speed trap, and finish.
