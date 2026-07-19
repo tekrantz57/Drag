@@ -3,6 +3,8 @@
 Each message is one printable ASCII line terminated by `LF`. Bytes outside
 ASCII `0x20` through `0x7E` are not permitted inside a message.
 
+The serial link runs at 115200 baud.
+
 ```text
 PART:PART:PART:XX
 ```
@@ -33,6 +35,10 @@ The active lane count is either `2` or `4`. Two-lane mode uses physical lanes
 Track and speed-trap lengths use integer thousandths of an inch. They are
 updated together, and the speed-trap length must be shorter than the track.
 Track length is race metadata; speed-trap length is used for MPH calculation.
+
+Sensor status fields use logical blocked state, not raw voltage. With the
+current active-HIGH LM393 sensors, `1` means the beam is blocked and `0` means
+the beam is clear.
 
 ## Windows-to-controller commands
 

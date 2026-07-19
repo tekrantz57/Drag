@@ -1,11 +1,10 @@
-# Tournament follow-up notes
+# Tournament Notes
 
 ## Ordered lane choice
 
 Implemented in the tournament runner.
 
-The current editable lane grid should become a sequential lane-choice workflow
-for rounds after the first:
+Rounds after the first use a sequential lane-choice workflow:
 
 1. Present cars in ascending order of valid prior-round reaction time.
 2. When the current chooser selects an occupied lane, swap the displaced car
@@ -16,3 +15,20 @@ for rounds after the first:
 5. Cars without a valid reaction time choose last, with ties randomized.
 
 Round-one lane assignment remains random.
+
+## Tournament storage
+
+Tournament data is stored in the local SQLite database managed by
+`RaceRepository`. By default that file is:
+
+```text
+%LOCALAPPDATA%\dragWin\dragWin.db
+```
+
+The source repository does not include operator database contents.
+
+## Heat setup
+
+The runner sends the active lane count, selected heat lanes, per-car dial-ins,
+and race mode before a heat. In 2-lane mode the physical lanes are lanes 1 and
+4.
