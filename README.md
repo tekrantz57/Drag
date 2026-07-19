@@ -18,8 +18,8 @@ The repository has two main parts:
 - Sensors: 4 beam sensors per lane: pre-stage, stage, speed trap, and finish.
 - Sensor polarity: LM393 slot sensors are active-HIGH on this track. A blocked
   beam reads `HIGH`; a clear beam reads `LOW`.
-- Unwired Mega inputs can float in active-HIGH mode. A disconnected sensor pin
-  may randomly appear blocked until a sensor or external pull-down is connected.
+- Wiring assumption: each sensor signal uses an Ethernet twisted pair with its
+  own ground return, plus a 10k pulldown from the Mega input node to ground.
 
 See [HARDWARE.md](HARDWARE.md) for the full pin map and setup notes.
 

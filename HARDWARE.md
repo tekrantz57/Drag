@@ -24,6 +24,38 @@ Mega inputs can float. During sensor testing, an unwired analog input may show
 as blocked until a sensor output or an external pull-down gives it a stable
 level.
 
+## Sensor Wiring
+
+Assume one Ethernet twisted pair per sensor output:
+
+```text
+LM393 sensor OUT  ---------------- Mega sensor input, such as A0
+LM393 sensor GND  ---------------- Mega GND
+                              |
+                              +-- 10k pulldown resistor -- Mega GND
+```
+
+The 10k pulldown resistor belongs between the Mega input node and ground. In
+other words, connect one side of the resistor to the same terminal or trace as
+the sensor signal input, and connect the other side to the same ground reference
+used by the sensor and Mega. This holds the active-HIGH input LOW when the
+sensor output is disconnected, clear, or not actively driving HIGH.
+
+Use the twisted pair as signal plus ground return for that sensor. Avoid using
+one cable pair for two unrelated sensor signals, because the twist is most
+useful when the signal wire and its return wire run together.
+
+Sensor power can use another Ethernet pair, or multiple pairs in parallel if
+the cable run is long:
+
+```text
+LM393 VCC  ---------------- Mega/controller +5V
+LM393 GND  ---------------- Mega/controller GND
+```
+
+Keep sensor cables separated from track power, motor feeds, and high-current
+tree-light wiring where practical.
+
 ## Sensor Pin Map
 
 Each lane currently has four sensors: pre-stage, stage, speed trap, and finish.
