@@ -730,13 +730,14 @@ void sendStatus() {
   sendProtocolMessage(message);
 
   for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
-    if (!laneIsActive(lane)) continue;
     snprintf(
         message, sizeof(message),
-        "STATUS:LANE:%u:DIAL_MS:%lu:PRESTAGE:%u:STAGE:%u:FOUL:%u:FINISHED:%u",
+        "STATUS:LANE:%u:DIAL_MS:%lu:PRESTAGE:%u:STAGE:%u:SPEED_TRAP:%u:FINISH:%u:FOUL:%u:FINISHED:%u",
         lane + 1, dialMs[lane],
         sensors[lane][PreStageSensor].isBlocked() ? 1 : 0,
         sensors[lane][StageSensor].isBlocked() ? 1 : 0,
+        sensors[lane][SpeedTrapSensor].isBlocked() ? 1 : 0,
+        sensors[lane][FinishSensor].isBlocked() ? 1 : 0,
         lanes[lane].fouled ? 1 : 0,
         lanes[lane].finished ? 1 : 0);
     sendProtocolMessage(message);

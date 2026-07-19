@@ -61,7 +61,7 @@ for the track to clear.
 - `ACK:SET:MODE:<mode>`
 - `ACK:SET:DIAL:<lane>:<milliseconds>`
 - `STATUS:TREE:<state>:MODE:<mode>:LANES:<2|4>:HEAT_LANES:<list>:TRACK_IN_X1000:<value>:TRAP_IN_X1000:<value>`
-- `STATUS:LANE:<lane>:DIAL_MS:<milliseconds>:PRESTAGE:<0|1>:STAGE:<0|1>:FOUL:<0|1>:FINISHED:<0|1>`
+- `STATUS:LANE:<lane>:DIAL_MS:<milliseconds>:PRESTAGE:<0|1>:STAGE:<0|1>:SPEED_TRAP:<0|1>:FINISH:<0|1>:FOUL:<0|1>:FINISHED:<0|1>`
 - `EVENT:TREE:<state>`
 - `EVENT:LANE:<lane>:AMBER_<1|2|3>`
 - `EVENT:LANE:<lane>:GREEN`

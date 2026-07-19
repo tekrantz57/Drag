@@ -19,6 +19,12 @@ public sealed class MainForm : Form
     private readonly Button pingButton = new() { Text = "Ping", Enabled = false };
     private readonly Button statusButton = new() { Text = "Status", Enabled = false };
     private readonly Button resetButton = new() { Text = "Reset", Enabled = false };
+    private readonly Button testSensorsButton = new()
+    {
+        Text = "Test Sensors",
+        AutoSize = true,
+        Enabled = false
+    };
     private readonly Button tournamentButton = new()
     {
         Text = "Racers / Tournament",
@@ -141,6 +147,7 @@ public sealed class MainForm : Form
         pingButton.Click += (_, _) => RunMainButtonAction(pingButton, () => SendCommand("PING"));
         statusButton.Click += (_, _) => RunMainButtonAction(statusButton, () => SendCommand("STATUS"));
         resetButton.Click += (_, _) => RunMainButtonAction(resetButton, () => SendCommand("RESET"));
+        testSensorsButton.Click += (_, _) => RunMainButtonAction(testSensorsButton, ShowSensorTest);
         tournamentButton.Click += (_, _) => RunMainButtonAction(tournamentButton, () =>
         {
             new TournamentSetupForm(raceRepository).ShowDialog(this);
@@ -187,11 +194,12 @@ public sealed class MainForm : Form
         {
             AutoSize = true,
             Dock = DockStyle.Top,
-            ColumnCount = 8,
+            ColumnCount = 9,
             RowCount = 3
         };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
@@ -217,6 +225,7 @@ public sealed class MainForm : Form
         layout.Controls.Add(pingButton, 1, 1);
         layout.Controls.Add(statusButton, 2, 1);
         layout.Controls.Add(resetButton, 3, 1);
+        layout.Controls.Add(testSensorsButton, 4, 1);
 
         layout.Controls.Add(new Label { AutoSize = true, Text = "Tournament:", Margin = labelMargin }, 0, 2);
         layout.Controls.Add(tournamentButton, 1, 2);
@@ -825,6 +834,23 @@ public sealed class MainForm : Form
         }
     }
 
+    private void ShowSensorTest()
+    {
+        if (!client.IsConnected)
+        {
+            MessageBox.Show(
+                this,
+                "Connect to the Mega before opening the sensor test.",
+                "Sensor Test",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+            return;
+        }
+
+        using var form = new SensorTestForm(client);
+        form.ShowDialog(this);
+    }
+
     private void SetConnectedState(bool connected)
     {
         connectionRequested = connected;
@@ -834,6 +860,7 @@ public sealed class MainForm : Form
         pingButton.Enabled = connected;
         statusButton.Enabled = connected;
         resetButton.Enabled = connected;
+        testSensorsButton.Enabled = connected;
         modeSelector.Enabled = true;
         laneCountSelector.Enabled = true;
         applySettingsButton.Enabled = connected;
