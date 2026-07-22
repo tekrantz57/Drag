@@ -5,6 +5,7 @@ public sealed class SensorTestForm : Form
     private const int LaneCount = 4;
     private const int SensorCount = 4;
     private static readonly string[] SensorNames = ["Pre-Stage", "Stage", "Speed Trap", "Finish"];
+    private static readonly string[] SensorProtocolNames = ["PRESTAGE", "STAGE", "SPEED_TRAP", "FINISH"];
     private static readonly string[,] SensorPins =
     {
         { "A0", "A1", "A2", "A3" },
@@ -15,6 +16,10 @@ public sealed class SensorTestForm : Form
 
     private readonly DragSerialClient client;
     private readonly Label[,] stateLabels = new Label[LaneCount, SensorCount];
+    private readonly bool?[,] blockedStates = new bool?[LaneCount, SensorCount];
+    private readonly bool?[,] rawBlockedStates = new bool?[LaneCount, SensorCount];
+    private readonly ulong[,] blockedEdgeCounts = new ulong[LaneCount, SensorCount];
+    private readonly ulong?[,] lastPulseWidthsUs = new ulong?[LaneCount, SensorCount];
     private readonly Label statusLabel = new()
     {
         AutoSize = true,
@@ -23,6 +28,11 @@ public sealed class SensorTestForm : Form
     private readonly System.Windows.Forms.Timer pollTimer = new()
     {
         Interval = 500
+    };
+    private readonly Button resetDiagnosticsButton = new()
+    {
+        AutoSize = true,
+        Text = "Reset Counts"
     };
 
     public SensorTestForm(DragSerialClient client)
@@ -38,6 +48,7 @@ public sealed class SensorTestForm : Form
 
         client.MessageReceived += ClientOnMessageReceived;
         pollTimer.Tick += (_, _) => PollStatus();
+        resetDiagnosticsButton.Click += (_, _) => ResetDiagnostics();
         FormClosed += (_, _) =>
         {
             pollTimer.Stop();
@@ -73,8 +84,24 @@ public sealed class SensorTestForm : Form
             Margin = new Padding(0, 0, 0, 12)
         }, 0, 0);
         outer.Controls.Add(CreateSensorGrid(), 0, 1);
-        outer.Controls.Add(statusLabel, 0, 2);
+        outer.Controls.Add(CreateFooter(), 0, 2);
         return outer;
+    }
+
+    private Control CreateFooter()
+    {
+        var footer = new TableLayoutPanel
+        {
+            AutoSize = true,
+            ColumnCount = 2,
+            Dock = DockStyle.Fill,
+            Margin = new Padding(0, 8, 0, 0)
+        };
+        footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        footer.Controls.Add(statusLabel, 0, 0);
+        footer.Controls.Add(resetDiagnosticsButton, 1, 0);
+        return footer;
     }
 
     private Control CreateSensorGrid()
@@ -138,7 +165,7 @@ public sealed class SensorTestForm : Form
             BackColor = Color.LightYellow,
             ForeColor = Color.Black,
             BorderStyle = BorderStyle.FixedSingle,
-            Font = new Font(FontFamily.GenericSansSerif, 14, FontStyle.Bold),
+            Font = new Font(FontFamily.GenericSansSerif, 11, FontStyle.Bold),
             Margin = new Padding(6)
         };
 
@@ -153,6 +180,7 @@ public sealed class SensorTestForm : Form
         try
         {
             client.Send("STATUS");
+            client.Send("SENSOR_DIAGNOSTICS");
             statusLabel.Text = $"Requested status at {DateTime.Now:T}";
         }
         catch (Exception exception)
@@ -173,6 +201,21 @@ public sealed class SensorTestForm : Form
 
     private void HandleMessage(ProtocolMessage message)
     {
+        if (message.Type == "ACK" &&
+            message.Parts.Count >= 2 &&
+            message.Parts[1] == "RESET_SENSOR_DIAGNOSTICS")
+        {
+            ClearLocalDiagnostics();
+            statusLabel.Text = "Sensor counters reset.";
+            return;
+        }
+
+        if (message.Type == "SENSOR")
+        {
+            HandleSensorDiagnostic(message);
+            return;
+        }
+
         if (message.Type != "STATUS" ||
             message.Parts.Count < 4 ||
             message.Parts[1] != "LANE" ||
@@ -190,10 +233,54 @@ public sealed class SensorTestForm : Form
         statusLabel.Text = $"Last sensor update {DateTime.Now:T}";
     }
 
-    private static Dictionary<string, string> ParseFields(ProtocolMessage message)
+    private void HandleSensorDiagnostic(ProtocolMessage message)
+    {
+        if (message.Parts.Count < 5 ||
+            !int.TryParse(message.Parts[1], out var laneNumber) ||
+            laneNumber is < 1 or > LaneCount)
+        {
+            return;
+        }
+
+        var sensorIndex = Array.IndexOf(SensorProtocolNames, message.Parts[2]);
+        if (sensorIndex < 0)
+        {
+            return;
+        }
+
+        var fields = ParseFields(message, 3);
+        var laneIndex = laneNumber - 1;
+        if (fields.TryGetValue("RAW", out var rawBlocked) &&
+            rawBlocked is "0" or "1")
+        {
+            rawBlockedStates[laneIndex, sensorIndex] = rawBlocked == "1";
+        }
+        if (fields.TryGetValue("EDGES", out var edgeCount) &&
+            ulong.TryParse(edgeCount, out var parsedEdgeCount))
+        {
+            blockedEdgeCounts[laneIndex, sensorIndex] = parsedEdgeCount;
+        }
+        if (fields.TryGetValue("PULSE_US", out var pulseWidth) &&
+            pulseWidth == "NONE")
+        {
+            lastPulseWidthsUs[laneIndex, sensorIndex] = null;
+        }
+        else if (pulseWidth is not null &&
+                 ulong.TryParse(pulseWidth, out var parsedPulseWidth))
+        {
+            lastPulseWidthsUs[laneIndex, sensorIndex] = parsedPulseWidth;
+        }
+
+        RefreshSensorLabel(laneIndex, sensorIndex);
+        statusLabel.Text = $"Last diagnostic update {DateTime.Now:T}";
+    }
+
+    private static Dictionary<string, string> ParseFields(
+        ProtocolMessage message,
+        int startIndex = 3)
     {
         var fields = new Dictionary<string, string>(StringComparer.Ordinal);
-        for (var index = 3; index + 1 < message.Parts.Count; index += 2)
+        for (var index = startIndex; index + 1 < message.Parts.Count; index += 2)
         {
             fields[message.Parts[index]] = message.Parts[index + 1];
         }
@@ -218,9 +305,66 @@ public sealed class SensorTestForm : Form
         }
 
         var blocked = value == "1";
+        blockedStates[laneIndex, sensorIndex] = blocked;
+        RefreshSensorLabel(laneIndex, sensorIndex);
+    }
+
+    private void RefreshSensorLabel(int laneIndex, int sensorIndex)
+    {
+        var blocked = blockedStates[laneIndex, sensorIndex];
+        var rawBlocked = rawBlockedStates[laneIndex, sensorIndex];
+        var stateText = blocked.HasValue ? (blocked.Value ? "BLOCKED" : "clear") : "?";
+        if (rawBlocked.HasValue && rawBlocked != blocked)
+        {
+            stateText += rawBlocked.Value ? " (raw blocked)" : " (raw clear)";
+        }
+
+        var pulseText = lastPulseWidthsUs[laneIndex, sensorIndex].HasValue
+            ? $"{lastPulseWidthsUs[laneIndex, sensorIndex]!.Value:N0} us"
+            : "none";
         var label = stateLabels[laneIndex, sensorIndex];
-        label.Text = $"{SensorPins[laneIndex, sensorIndex]}\r\n{(blocked ? "BLOCKED" : "clear")}";
-        label.BackColor = blocked ? Color.LimeGreen : Color.FromArgb(235, 235, 235);
-        label.ForeColor = blocked ? Color.Black : Color.FromArgb(70, 70, 70);
+        label.Text =
+            $"{SensorPins[laneIndex, sensorIndex]}\r\n{stateText}\r\n" +
+            $"Edges {blockedEdgeCounts[laneIndex, sensorIndex]:N0}\r\nPulse {pulseText}";
+        label.BackColor = blocked == true
+            ? Color.LimeGreen
+            : blocked == false
+                ? Color.FromArgb(235, 235, 235)
+                : Color.LightYellow;
+        label.ForeColor = blocked == false
+            ? Color.FromArgb(70, 70, 70)
+            : Color.Black;
+    }
+
+    private void ResetDiagnostics()
+    {
+        if (!client.IsConnected)
+        {
+            statusLabel.Text = "Serial port disconnected.";
+            return;
+        }
+
+        try
+        {
+            client.Send("RESET_SENSOR_DIAGNOSTICS");
+            statusLabel.Text = "Resetting sensor counters...";
+        }
+        catch (Exception exception)
+        {
+            statusLabel.Text = $"Could not reset counters: {exception.Message}";
+        }
+    }
+
+    private void ClearLocalDiagnostics()
+    {
+        for (var lane = 0; lane < LaneCount; lane++)
+        {
+            for (var sensor = 0; sensor < SensorCount; sensor++)
+            {
+                blockedEdgeCounts[lane, sensor] = 0;
+                lastPulseWidthsUs[lane, sensor] = null;
+                RefreshSensorLabel(lane, sensor);
+            }
+        }
     }
 }

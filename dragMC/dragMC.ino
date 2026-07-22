@@ -7,7 +7,7 @@ constexpr uint8_t MAX_LANE_COUNT = 4;
 constexpr uint8_t LIGHTS_PER_LANE = 7;
 constexpr uint8_t SENSORS_PER_LANE = 4;
 constexpr char FIRMWARE_NAME[] = "DRAG_MC";
-constexpr char FIRMWARE_VERSION[] = "0.2.0";
+constexpr char FIRMWARE_VERSION[] = "0.3.0";
 constexpr uint8_t PROTOCOL_VERSION = 2;
 
 enum LightIndex : uint8_t {
@@ -26,6 +26,9 @@ enum SensorIndex : uint8_t {
   SpeedTrapSensor,
   FinishSensor
 };
+
+constexpr const char* SENSOR_NAMES[SENSORS_PER_LANE] = {
+    "PRESTAGE", "STAGE", "SPEED_TRAP", "FINISH"};
 
 constexpr uint8_t LIGHT_PINS[MAX_LANE_COUNT][LIGHTS_PER_LANE] = {
     {22, 23, 24, 25, 26, 27, 28},
@@ -58,7 +61,7 @@ constexpr unsigned long MAX_RACE_TIME_MS = 30000;
 constexpr unsigned long MIN_DIAL_MS = 100;
 constexpr unsigned long MAX_DIAL_MS = 60000;
 constexpr unsigned long DEFAULT_DIAL_MS = 10000;
-constexpr uint8_t SERIAL_QUEUE_CAPACITY = 16;
+constexpr uint8_t SERIAL_QUEUE_CAPACITY = 24;
 constexpr uint8_t SERIAL_FRAME_SIZE = 136;
 constexpr uint8_t MAX_SERIAL_INPUT_BYTES_PER_LOOP = 32;
 constexpr unsigned long HEARTBEAT_INTERVAL_MS = 1000;
@@ -86,8 +89,10 @@ class DebouncedBeamSensor {
     pinMode(pin_, SENSOR_IS_ACTIVE_LOW ? INPUT_PULLUP : INPUT);
     rawBlocked_ = readRawBlocked();
     blocked_ = rawBlocked_;
+    const unsigned long nowUs = micros();
     rawChangedAtMs_ = millis();
-    rawChangedAtUs_ = micros();
+    rawChangedAtUs_ = nowUs;
+    rawPulseStartedAtUs_ = nowUs;
   }
 
   void update(const unsigned long nowMs) {
@@ -97,6 +102,13 @@ class DebouncedBeamSensor {
 
     const bool newRawBlocked = readRawBlocked();
     if (newRawBlocked != rawBlocked_) {
+      if (newRawBlocked) {
+        if (blockedEdgeCount_ < ULONG_MAX) ++blockedEdgeCount_;
+        rawPulseStartedAtUs_ = nowUs;
+      } else {
+        lastRawPulseWidthUs_ = nowUs - rawPulseStartedAtUs_;
+        hasCompletedRawPulse_ = true;
+      }
       rawBlocked_ = newRawBlocked;
       rawChangedAtMs_ = nowMs;
       rawChangedAtUs_ = nowUs;
@@ -122,6 +134,17 @@ class DebouncedBeamSensor {
   bool becameUnblocked() const { return becameUnblocked_; }
   unsigned long blockedAtUs() const { return blockedAtUs_; }
   unsigned long unblockedAtUs() const { return unblockedAtUs_; }
+  bool isRawBlocked() const { return rawBlocked_; }
+  unsigned long blockedEdgeCount() const { return blockedEdgeCount_; }
+  bool hasCompletedRawPulse() const { return hasCompletedRawPulse_; }
+  unsigned long lastRawPulseWidthUs() const { return lastRawPulseWidthUs_; }
+
+  void resetDiagnostics() {
+    blockedEdgeCount_ = 0;
+    lastRawPulseWidthUs_ = 0;
+    hasCompletedRawPulse_ = false;
+    if (rawBlocked_) rawPulseStartedAtUs_ = micros();
+  }
 
  private:
   bool readRawBlocked() const {
@@ -138,6 +161,10 @@ class DebouncedBeamSensor {
   unsigned long rawChangedAtUs_ = 0;
   unsigned long blockedAtUs_ = 0;
   unsigned long unblockedAtUs_ = 0;
+  unsigned long rawPulseStartedAtUs_ = 0;
+  unsigned long blockedEdgeCount_ = 0;
+  unsigned long lastRawPulseWidthUs_ = 0;
+  bool hasCompletedRawPulse_ = false;
 };
 
 struct LaneRace {
@@ -744,6 +771,42 @@ void sendStatus() {
   }
 }
 
+void sendSensorDiagnostics() {
+  char message[132];
+  for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
+    for (uint8_t sensor = 0; sensor < SENSORS_PER_LANE; ++sensor) {
+      const DebouncedBeamSensor& beam = sensors[lane][sensor];
+      if (beam.hasCompletedRawPulse()) {
+        snprintf(
+            message, sizeof(message),
+            "SENSOR:%u:%s:RAW:%u:EDGES:%lu:PULSE_US:%lu",
+            lane + 1,
+            SENSOR_NAMES[sensor],
+            beam.isRawBlocked() ? 1 : 0,
+            beam.blockedEdgeCount(),
+            beam.lastRawPulseWidthUs());
+      } else {
+        snprintf(
+            message, sizeof(message),
+            "SENSOR:%u:%s:RAW:%u:EDGES:%lu:PULSE_US:NONE",
+            lane + 1,
+            SENSOR_NAMES[sensor],
+            beam.isRawBlocked() ? 1 : 0,
+            beam.blockedEdgeCount());
+      }
+      sendProtocolMessage(message);
+    }
+  }
+}
+
+void resetSensorDiagnostics() {
+  for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
+    for (uint8_t sensor = 0; sensor < SENSORS_PER_LANE; ++sensor) {
+      sensors[lane][sensor].resetDiagnostics();
+    }
+  }
+}
+
 int8_t hexValue(const char value) {
   if (value >= '0' && value <= '9') return value - '0';
   if (value >= 'A' && value <= 'F') return value - 'A' + 10;
@@ -908,6 +971,11 @@ void processCommand(char* line) {
     sendProtocolMessage("ACK:PING");
   } else if (strcmp(line, "STATUS") == 0) {
     sendStatus();
+  } else if (strcmp(line, "SENSOR_DIAGNOSTICS") == 0) {
+    sendSensorDiagnostics();
+  } else if (strcmp(line, "RESET_SENSOR_DIAGNOSTICS") == 0) {
+    resetSensorDiagnostics();
+    sendProtocolMessage("ACK:RESET_SENSOR_DIAGNOSTICS");
   } else if (strcmp(line, "RESET") == 0) {
     sendProtocolMessage("ACK:RESET");
     enterState(TreeState::WaitingForAllLanes, millis());

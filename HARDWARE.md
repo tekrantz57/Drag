@@ -88,6 +88,14 @@ behavior.
 ## Sensor Pin Map
 
 Each lane currently has four sensors: pre-stage, stage, speed trap, and finish.
+Track testing has started with lane 1 pre-stage and stage wired/tested on A0
+and A1. A2 and A3 are the next expected lane 1 sensors to add/test.
+
+The Windows `Test Sensors` window displays a raw blocked-edge count and the
+most recently completed raw blocked-pulse width for each input. These values
+are collected before the firmware's 2 ms race debounce. Use them during moving
+car tests on A2 and A3: the count confirms that a pulse reached the Mega, and
+the pulse width shows whether it was long enough to pass the current debounce.
 
 | Lane | Pre-stage | Stage | Speed trap | Finish |
 | --- | --- | --- | --- | --- |
@@ -115,7 +123,8 @@ race lights are forced off.
 
 ## Future Split Sensors
 
-There may be two intermediate/split sensors per lane later. Treat them as
-optional diagnostic or split-timing sensors until the venue's exact use is
-confirmed. Adding them for all four lanes would raise the sensor count from 16
-to 24 and require expanding the pin map beyond `A0` through `A15`.
+The track will probably add two intermediate/split sensors per lane later.
+Treat them as optional diagnostic or split-timing sensors until the venue's
+exact use is confirmed. Adding them for all four lanes would raise the sensor
+count from 16 to 24 and require expanding the pin map beyond `A0` through
+`A15`.

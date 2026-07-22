@@ -25,6 +25,18 @@ Assert(
 AssertEqual("GREEN", eventMessage!.Parts[3]);
 AssertEqual("42", eventMessage.Parts[5]);
 
+var sensorDiagnostic = ProtocolMessage.Create(
+    "SENSOR", "1", "SPEED_TRAP", "RAW", "0", "EDGES", "7",
+    "PULSE_US", "1340").Encode();
+Assert(
+    ProtocolMessage.TryParse(sensorDiagnostic, out var sensorDiagnosticMessage, out _),
+    "A sensor diagnostic should round-trip.");
+AssertEqual("SPEED_TRAP", sensorDiagnosticMessage!.Parts[2]);
+AssertEqual("7", sensorDiagnosticMessage.Parts[6]);
+AssertEqual(
+    "RESET_SENSOR_DIAGNOSTICS:17",
+    ProtocolMessage.Create("RESET_SENSOR_DIAGNOSTICS").Encode());
+
 Assert(
     ProtocolMessage.TryParse("STATUS:TREE:GREEN:49", out var message, out _),
     "A valid status message should parse.");

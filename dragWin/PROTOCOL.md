@@ -44,6 +44,8 @@ the beam is clear.
 
 - `PING`
 - `STATUS`
+- `SENSOR_DIAGNOSTICS`
+- `RESET_SENSOR_DIAGNOSTICS`
 - `RESET`
 - `SET:LANES:<2|4>`
 - `SET:HEAT_LANES:<comma-separated-physical-lanes>`
@@ -61,6 +63,7 @@ for the track to clear.
 - `HEARTBEAT:<controller-millis>:SEQ:<last-event-sequence>:STATE:<state>`
 - `ACK:PING`
 - `ACK:RESET`
+- `ACK:RESET_SENSOR_DIAGNOSTICS`
 - `ACK:SET:LANES:<2|4>`
 - `ACK:SET:HEAT_LANES:<comma-separated-physical-lanes>`
 - `ACK:SET:DISTANCES:<track-inches-x1000>:<trap-inches-x1000>`
@@ -68,6 +71,7 @@ for the track to clear.
 - `ACK:SET:DIAL:<lane>:<milliseconds>`
 - `STATUS:TREE:<state>:MODE:<mode>:LANES:<2|4>:HEAT_LANES:<list>:TRACK_IN_X1000:<value>:TRAP_IN_X1000:<value>`
 - `STATUS:LANE:<lane>:DIAL_MS:<milliseconds>:PRESTAGE:<0|1>:STAGE:<0|1>:SPEED_TRAP:<0|1>:FINISH:<0|1>:FOUL:<0|1>:FINISHED:<0|1>`
+- `SENSOR:<lane>:<name>:RAW:<0|1>:EDGES:<count>:PULSE_US:<microseconds|NONE>`
 - `EVENT:TREE:<state>`
 - `EVENT:LANE:<lane>:AMBER_<1|2|3>`
 - `EVENT:LANE:<lane>:GREEN`
@@ -96,3 +100,10 @@ for the track to clear.
 The sequence number increments for each `EVENT` or `RESULT` frame and resets
 when the controller resets. Windows should treat these fields as metadata; the
 race meaning is still in the leading fields.
+
+Sensor diagnostics are collected from raw input transitions before the 2 ms
+race debounce is applied. `EDGES` counts clear-to-blocked transitions.
+`PULSE_US` is the duration of the most recently completed blocked pulse, or
+`NONE` if no pulse has completed since startup or the last diagnostic reset.
+Counters saturate rather than wrapping and can be cleared without resetting
+the race controller.

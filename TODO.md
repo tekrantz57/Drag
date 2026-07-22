@@ -1,9 +1,28 @@
 # Drag Strip TODO
 
+## Track sensor validation
+
+- Run moving-car tests on lane 1 A2 and A3 and record the raw pulse widths
+  reported by the Sensor Test window at representative speeds.
+- Revisit the current 2 ms debounce only after pulse-width measurements are
+  available. A pulse shorter than 2 ms is recorded by diagnostics but is not
+  accepted as a race sensor transition.
+- Decide whether polling remains sufficient after comparing repeated physical
+  passes with the edge counts. Consider pulse-stretching hardware or port-level
+  pin-change interrupts only if repeatable passes are missed or pulses approach
+  the polling interval; the full A0-A15 map cannot use ordinary external
+  interrupts uniformly.
+- Measure and configure the exact A2-to-A3 sensing-plane distance used for the
+  speed calculation. The overall track length is currently metadata only.
+- During lane 1 bring-up, select only lane 1 as a heat participant and install
+  10k pulldowns on disconnected active-HIGH inputs that are being monitored.
+- Reserve Mega D2-D9 as the tentative eight-input map for two future split
+  sensors per lane, pending confirmation of their locations and purpose.
+
 ## Intermediate track sensors
 
-- Investigate the two intermediate sensors seen on the local track and compare
-  notes with the 4-lane slot car drag-strip setup in England.
+- Investigate the two intermediate sensors expected on the local track and
+  compare notes with the 4-lane slot car drag-strip setup in England.
 - Likely future per-lane sensor model:
   - Pre-stage
   - Stage

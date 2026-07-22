@@ -57,6 +57,16 @@ GitHub at `https://github.com/tekrantz57/Drag`.
 - Treat the 330 ohm board modification as a note to preserve, not as a default
   build step until the exact board revision and resistor position are verified.
 
+## Current Track Testing
+
+- Track wiring/testing has started with real LM393 sensors installed at the
+  track.
+- A0 and A1 have been tested at the track for lane 1 pre-stage and stage.
+- A2 and A3 are the next expected lane 1 sensors to add/test for speed trap
+  and finish.
+- The venue will probably add two intermediate/split sensors to each lane,
+  increasing the likely future model from 4 sensors per lane to 6.
+
 ## Current Software Features
 
 - Firmware supports heads-up and bracket racing.
@@ -72,12 +82,11 @@ GitHub at `https://github.com/tekrantz57/Drag`.
   - ordered lane choice after round one
   - local SQLite tournament storage
   - tournament reports
-  - Sensor Test window that polls `STATUS` and displays all four sensors for
-    all four lanes
-- Sensor Test is useful but can feel sluggish because it polls the controller
-  and updates the UI. For raw confidence testing, use a tiny Arduino sketch
-  that repeatedly reads `digitalRead(A0)` and prints `HIGH/BLOCKED` or
-  `LOW/clear`.
+  - Sensor Test window that displays all four sensors for all four lanes,
+    including raw blocked-edge counts and last blocked-pulse widths
+- Sensor Test polls current state but obtains edge counts and pulse widths from
+  firmware-maintained diagnostics, so short pulses do not need to coincide
+  with a Windows polling request to appear in the diagnostic display.
 
 ## Validation Baseline
 
