@@ -97,7 +97,7 @@ public sealed class TournamentPlanner
         ArgumentNullException.ThrowIfNull(results);
 
         var resultByCar = results.ToDictionary(result => result.CarId);
-        var ordered = heat.Entries
+        var normalized = heat.Entries
             .Select(entry => resultByCar.TryGetValue(entry.Car.Id, out var result)
                 ? result with { IsBye = entry.IsBye }
                 : new RunResult(
@@ -107,9 +107,14 @@ public sealed class TournamentPlanner
                     null,
                     null,
                     entry.IsBye))
-            .OrderBy(result => result.IsBye ? -1 : LegalityRank(result.Legality))
+            .ToArray();
+
+        var ordered = normalized
+            .OrderBy(result => result.IsBye ? 0 :
+                result.FinishOrder != int.MaxValue ? 1 : 2)
+            .ThenBy(result => result.IsBye ? 0 : result.FinishOrder)
+            .ThenBy(result => result.IsBye ? 0 : LegalityRank(result.Legality))
             .ThenBy(result => result.IsBye ? 0 : LegalityDetail(result))
-            .ThenBy(result => result.FinishOrder)
             .Take(Math.Min(heat.AdvanceCount, heat.Entries.Count))
             .ToArray();
 

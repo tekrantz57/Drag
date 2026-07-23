@@ -9,41 +9,75 @@ public sealed class MainForm : Form
     private readonly DragSerialClient client = new();
     private readonly RaceRepository raceRepository = new();
     private bool connectionRequested;
+    private bool controllerReady;
     private bool mainActionRunning;
     private DateTimeOffset lastMainButtonActionAt;
-    private readonly ToolStripMenuItem configureDistancesMenuItem =
-        new("Track distances...");
-    private readonly ComboBox portSelector = new() { DropDownStyle = ComboBoxStyle.DropDownList };
-    private readonly Button refreshButton = new() { Text = "Refresh" };
-    private readonly Button connectButton = new() { Text = "Connect" };
-    private readonly Button pingButton = new() { Text = "Ping", Enabled = false };
-    private readonly Button statusButton = new() { Text = "Status", Enabled = false };
-    private readonly Button resetButton = new() { Text = "Reset", Enabled = false };
-    private readonly Button testSensorsButton = new()
+    private DateTimeOffset? autoConnectDeadline;
+    private string? rememberedControllerPortThisSession;
+    private readonly ToolStripMenuItem configureRaceMenuItem = new("Race and track settings...");
+    private readonly ToolStripMenuItem pingMenuItem = new("Ping controller") { Enabled = false };
+    private readonly ToolStripMenuItem statusMenuItem = new("Request controller status") { Enabled = false };
+    private readonly ToolStripMenuItem resetMenuItem = new("Reset controller") { Enabled = false };
+    private readonly ToolStripMenuItem testSensorsMenuItem = new("Sensor test...") { Enabled = false };
+    private readonly ToolStripMenuItem protocolLogMenuItem = new("Protocol log...");
+    private readonly ToolStripMenuItem demoPracticeMenuItem = new("Generate demo practice run");
+    private readonly ComboBox portSelector = new()
     {
-        Text = "Test Sensors",
+        DropDownStyle = ComboBoxStyle.DropDownList,
+        Dock = DockStyle.Fill,
+        MinimumSize = new Size(130, 0)
+    };
+    private readonly Button refreshButton = new()
+    {
+        Text = "Refresh Ports",
         AutoSize = true,
-        Enabled = false
+        MinimumSize = new Size(100, 30)
+    };
+    private readonly Button connectButton = new()
+    {
+        Text = "Connect",
+        AutoSize = true,
+        MinimumSize = new Size(105, 30),
+        BackColor = Color.FromArgb(35, 91, 145),
+        ForeColor = Color.White,
+        FlatStyle = FlatStyle.Flat
     };
     private readonly Button tournamentButton = new()
     {
-        Text = "Racers / Tournament",
+        Text = "New Tournament",
         AutoSize = true,
-        MinimumSize = new Size(150, 0)
+        MinimumSize = new Size(125, 32)
     };
     private readonly ComboBox tournamentSelector = new()
     {
         DropDownStyle = ComboBoxStyle.DropDownList,
-        Width = 180,
+        Dock = DockStyle.Fill,
+        MinimumSize = new Size(180, 0),
         DisplayMember = nameof(Tournament.Name)
     };
     private readonly Button runTournamentButton = new()
     {
-        Text = "Run / Resume",
+        Text = "Run / Resume Tournament",
         AutoSize = true,
-        MinimumSize = new Size(110, 0)
+        MinimumSize = new Size(180, 32),
+        BackColor = Color.FromArgb(39, 122, 79),
+        ForeColor = Color.White,
+        FlatStyle = FlatStyle.Flat
     };
-    private readonly Label connectionLabel = new() { AutoSize = true, Text = "Disconnected" };
+    private readonly Label connectionLabel = new()
+    {
+        AutoSize = false,
+        Dock = DockStyle.Fill,
+        Text = "Disconnected",
+        TextAlign = ContentAlignment.MiddleLeft,
+        Padding = new Padding(10, 0, 10, 0),
+        Font = new Font(SystemFonts.DefaultFont, FontStyle.Bold)
+    };
+    private readonly Label settingsSummaryLabel = new()
+    {
+        AutoSize = true,
+        ForeColor = SystemColors.GrayText
+    };
     private readonly ComboBox modeSelector = new()
     {
         DropDownStyle = ComboBoxStyle.DropDownList,
@@ -54,6 +88,22 @@ public sealed class MainForm : Form
     {
         DropDownStyle = ComboBoxStyle.DropDownList,
         Width = 50,
+        Enabled = false
+    };
+    private readonly ComboBox treeModeSelector = new()
+    {
+        DropDownStyle = ComboBoxStyle.DropDownList,
+        Width = 70,
+        Enabled = false
+    };
+    private readonly NumericUpDown stagedDelayInput = new()
+    {
+        DecimalPlaces = 3,
+        Increment = 0.050M,
+        Minimum = 0M,
+        Maximum = 5.000M,
+        Value = 0.500M,
+        Width = 78,
         Enabled = false
     };
     private readonly ToolTip toolTip = new();
@@ -79,22 +129,15 @@ public sealed class MainForm : Form
         Width = 90,
         Enabled = false
     };
-    private readonly Button applySettingsButton = new()
-    {
-        Text = "Apply Settings",
-        AutoSize = true,
-        Enabled = false
-    };
     private readonly Button startPracticeButton = new()
     {
-        Text = "Start Practice Setup",
+        Text = "Arm Practice Run",
         AutoSize = true,
-        Enabled = false
-    };
-    private readonly Button demoPracticeButton = new()
-    {
-        Text = "Demo Practice Run",
-        AutoSize = true
+        Enabled = false,
+        MinimumSize = new Size(150, 32),
+        BackColor = Color.FromArgb(35, 91, 145),
+        ForeColor = Color.White,
+        FlatStyle = FlatStyle.Flat
     };
     private readonly System.Windows.Forms.Timer heartbeatTimer = new()
     {
@@ -108,12 +151,20 @@ public sealed class MainForm : Form
         Dock = DockStyle.Fill,
         Font = new Font(FontFamily.GenericMonospace, 9)
     };
+    private readonly ListBox activityList = new()
+    {
+        Dock = DockStyle.Fill,
+        IntegralHeight = false,
+        BorderStyle = BorderStyle.FixedSingle
+    };
 
     public MainForm()
     {
         Text = "Drag Strip Controller";
-        MinimumSize = new Size(980, 600);
+        MinimumSize = new Size(900, 620);
+        Size = new Size(1100, 720);
         StartPosition = FormStartPosition.CenterScreen;
+        BackColor = SystemColors.Window;
 
         modeSelector.Items.AddRange(["HEADS_UP", "BRACKET"]);
         modeSelector.SelectedItem = "BRACKET";
@@ -121,220 +172,202 @@ public sealed class MainForm : Form
         laneCountSelector.Items.AddRange(["2", "4"]);
         laneCountSelector.SelectedItem = "4";
         laneCountSelector.Enabled = true;
+        treeModeSelector.Items.AddRange(["FULL", "PRO"]);
+        treeModeSelector.SelectedItem = "FULL";
+        treeModeSelector.Enabled = true;
+        InitializeDialInputs();
+        UiStyles.ConfigurePrimaryButton(startPracticeButton, UiStyles.BlueAction);
+        UiStyles.ConfigurePrimaryButton(runTournamentButton, UiStyles.GreenAction);
+        connectButton.UseVisualStyleBackColor = false;
+        connectButton.EnabledChanged += (_, _) => UpdateConnectButtonAppearance();
+        UpdateConnectButtonAppearance();
 
-        var connectionControls = CreateConnectionControls();
-        var raceSettings = CreateRaceSettings();
         var menuStrip = CreateMenuStrip();
+        var title = CreateTitleBar();
+        var connectionControls = CreateConnectionControls();
+        var operations = CreateOperationsPanel();
+        var activity = CreateActivityPanel();
         var layout = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
-            RowCount = 4
+            RowCount = 5
         };
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.Controls.Add(menuStrip, 0, 0);
-        layout.Controls.Add(connectionControls, 0, 1);
-        layout.Controls.Add(raceSettings, 0, 2);
-        layout.Controls.Add(logTextBox, 0, 3);
+        layout.Controls.Add(title, 0, 1);
+        layout.Controls.Add(connectionControls, 0, 2);
+        layout.Controls.Add(operations, 0, 3);
+        layout.Controls.Add(activity, 0, 4);
         Controls.Add(layout);
         MainMenuStrip = menuStrip;
 
         refreshButton.Click += (_, _) => RunMainButtonAction(refreshButton, RefreshPorts);
         connectButton.Click += (_, _) => RunMainButtonAction(connectButton, ToggleConnection);
-        pingButton.Click += (_, _) => RunMainButtonAction(pingButton, () => SendCommand("PING"));
-        statusButton.Click += (_, _) => RunMainButtonAction(statusButton, () => SendCommand("STATUS"));
-        resetButton.Click += (_, _) => RunMainButtonAction(resetButton, () => SendCommand("RESET"));
-        testSensorsButton.Click += (_, _) => RunMainButtonAction(testSensorsButton, ShowSensorTest);
         tournamentButton.Click += (_, _) => RunMainButtonAction(tournamentButton, () =>
         {
             new TournamentSetupForm(raceRepository).ShowDialog(this);
             RefreshTournaments();
         });
         runTournamentButton.Click += (_, _) => RunMainButtonAction(runTournamentButton, RunSelectedTournament);
-        applySettingsButton.Click += (_, _) => RunMainButtonAction(applySettingsButton, () => ApplyRaceSettings());
         startPracticeButton.Click += (_, _) => RunMainButtonAction(startPracticeButton, StartPracticeSetup);
-        demoPracticeButton.Click += (_, _) => RunMainButtonAction(demoPracticeButton, DemoPracticeRun);
-        configureDistancesMenuItem.Click += (_, _) => ShowDistanceSettings();
-        modeSelector.SelectedIndexChanged += (_, _) => UpdateDialInputState();
-        laneCountSelector.SelectedIndexChanged += (_, _) => UpdateDialInputState();
+        configureRaceMenuItem.Click += (_, _) => ShowRaceSettings();
+        pingMenuItem.Click += (_, _) => SendCommand("PING");
+        statusMenuItem.Click += (_, _) => SendCommand("STATUS");
+        resetMenuItem.Click += (_, _) => ResetController();
+        testSensorsMenuItem.Click += (_, _) => ShowSensorTest();
+        protocolLogMenuItem.Click += (_, _) => ShowProtocolLog();
+        demoPracticeMenuItem.Click += (_, _) => DemoPracticeRun();
+        modeSelector.SelectedIndexChanged += (_, _) =>
+        {
+            UpdateDialInputState();
+            UpdateSettingsSummary();
+        };
+        laneCountSelector.SelectedIndexChanged += (_, _) =>
+        {
+            UpdateDialInputState();
+            UpdateSettingsSummary();
+        };
+        treeModeSelector.SelectedIndexChanged += (_, _) => UpdateSettingsSummary();
         client.MessageReceived += (_, message) =>
             PostToUi(() => HandleMessage(message));
         client.ProtocolError += (_, error) =>
             PostToUi(() => AppendLog($"! {error}"));
-        heartbeatTimer.Tick += (_, _) => UpdateConnectionLabel();
+        heartbeatTimer.Tick += (_, _) =>
+        {
+            UpdateConnectionLabel();
+            CheckAutoConnectAttempt();
+        };
         heartbeatTimer.Start();
+        Shown += (_, _) => BeginInvoke(TryAutoConnect);
 
         RefreshPorts();
         RefreshTournaments();
         UpdateDialInputState();
+        UpdateSettingsSummary();
+        UpdateConnectionLabel();
     }
 
     private MenuStrip CreateMenuStrip()
     {
         var menuStrip = new MenuStrip { Dock = DockStyle.Top };
         var configureMenu = new ToolStripMenuItem("Configure");
-        configureMenu.DropDownItems.Add(configureDistancesMenuItem);
-        menuStrip.Items.Add(configureMenu);
+        configureMenu.DropDownItems.Add(configureRaceMenuItem);
+        var diagnosticsMenu = new ToolStripMenuItem("Diagnostics");
+        diagnosticsMenu.DropDownItems.AddRange([
+            pingMenuItem,
+            statusMenuItem,
+            new ToolStripSeparator(),
+            testSensorsMenuItem,
+            resetMenuItem,
+            new ToolStripSeparator(),
+            protocolLogMenuItem
+        ]);
+        var testMenu = new ToolStripMenuItem("Test");
+        testMenu.DropDownItems.Add(demoPracticeMenuItem);
+        menuStrip.Items.AddRange([configureMenu, diagnosticsMenu, testMenu]);
         return menuStrip;
+    }
+
+    private Control CreateTitleBar()
+    {
+        var panel = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            AutoSize = true,
+            ColumnCount = 2,
+            Padding = new Padding(16, 12, 16, 8)
+        };
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        panel.Controls.Add(new Label
+        {
+            Text = "Race Control",
+            AutoSize = true,
+            Font = new Font(SystemFonts.DefaultFont.FontFamily, 18, FontStyle.Bold),
+            ForeColor = Color.FromArgb(35, 45, 55)
+        }, 0, 0);
+        panel.Controls.Add(settingsSummaryLabel, 1, 0);
+        return panel;
     }
 
     private Control CreateConnectionControls()
     {
-        var group = new GroupBox
-        {
-            AutoSize = true,
-            Dock = DockStyle.Fill,
-            Text = "Connection and Tournament",
-            Padding = new Padding(8)
-        };
         var layout = new TableLayoutPanel
         {
             AutoSize = true,
-            Dock = DockStyle.Top,
-            ColumnCount = 9,
-            RowCount = 3
+            Dock = DockStyle.Fill,
+            ColumnCount = 5,
+            Padding = new Padding(16, 8, 16, 10),
+            BackColor = Color.FromArgb(242, 244, 246)
         };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 40));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 220));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        for (var row = 0; row < layout.RowCount; row++)
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 60));
+        layout.Controls.Add(new Label
         {
-            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        }
-
-        portSelector.Width = 110;
-        tournamentSelector.Width = 210;
-        var labelMargin = new Padding(3, 8, 6, 3);
-
-        layout.Controls.Add(new Label { AutoSize = true, Text = "Serial port:", Margin = labelMargin }, 0, 0);
+            AutoSize = true,
+            Text = "Controller port",
+            Anchor = AnchorStyles.Left,
+            Margin = new Padding(0, 8, 10, 3)
+        }, 0, 0);
         layout.Controls.Add(portSelector, 1, 0);
         layout.Controls.Add(refreshButton, 2, 0);
         layout.Controls.Add(connectButton, 3, 0);
         layout.Controls.Add(connectionLabel, 4, 0);
-        layout.SetColumnSpan(connectionLabel, 4);
-
-        layout.Controls.Add(pingButton, 1, 1);
-        layout.Controls.Add(statusButton, 2, 1);
-        layout.Controls.Add(resetButton, 3, 1);
-        layout.Controls.Add(testSensorsButton, 4, 1);
-
-        layout.Controls.Add(new Label { AutoSize = true, Text = "Tournament:", Margin = labelMargin }, 0, 2);
-        layout.Controls.Add(tournamentButton, 1, 2);
-        layout.SetColumnSpan(tournamentButton, 3);
-        layout.Controls.Add(tournamentSelector, 4, 2);
-        layout.SetColumnSpan(tournamentSelector, 2);
-        layout.Controls.Add(runTournamentButton, 6, 2);
-
-        group.Controls.Add(layout);
-        return group;
+        return layout;
     }
 
-    private Control CreateRaceSettings()
+    private void InitializeDialInputs()
     {
-        var group = new GroupBox
-        {
-            AutoSize = true,
-            Dock = DockStyle.Fill,
-            Text = "Manual Controller Settings",
-            Padding = new Padding(8)
-        };
-
-        var layout = new TableLayoutPanel
-        {
-            AutoSize = true,
-            Dock = DockStyle.Top,
-            ColumnCount = 12,
-            RowCount = 3
-        };
-        for (var column = 0; column < layout.ColumnCount; column++)
-        {
-            layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        }
-        for (var row = 0; row < layout.RowCount; row++)
-        {
-            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        }
-        var labelMargin = new Padding(3, 8, 6, 3);
-        var controlMargin = new Padding(3, 3, 12, 3);
-
-        layout.Controls.Add(new Label
-        {
-            AutoSize = true,
-            Text = "Race mode:",
-            Margin = labelMargin
-        }, 0, 0);
-        modeSelector.Margin = controlMargin;
-        layout.Controls.Add(modeSelector, 1, 0);
-        layout.Controls.Add(new Label
-        {
-            AutoSize = true,
-            Text = "Lanes:",
-            Margin = labelMargin
-        }, 2, 0);
-        laneCountSelector.Margin = controlMargin;
-        layout.Controls.Add(laneCountSelector, 3, 0);
-        layout.Controls.Add(applySettingsButton, 4, 0);
-        layout.SetColumnSpan(applySettingsButton, 2);
-        layout.Controls.Add(startPracticeButton, 6, 0);
-        layout.SetColumnSpan(startPracticeButton, 2);
-        layout.Controls.Add(demoPracticeButton, 8, 0);
-        layout.SetColumnSpan(demoPracticeButton, 3);
-
         for (var lane = 0; lane < LaneCount; lane++)
         {
-            var column = lane * 3;
-            layout.Controls.Add(new Label
-            {
-                AutoSize = true,
-                Text = $"Lane {lane + 1} dial:",
-                Margin = labelMargin
-            }, column, 1);
-
-            var input = new NumericUpDown
+            dialInputs[lane] = new NumericUpDown
             {
                 DecimalPlaces = 3,
                 Increment = 0.001M,
                 Minimum = 0.100M,
                 Maximum = 60.000M,
                 Value = 10.000M,
-                Width = 78,
-                Enabled = false,
-                Margin = new Padding(3, 3, 3, 3)
+                Width = 90
             };
-            toolTip.SetToolTip(
-                input,
-                "Manual per-lane dial-in for non-tournament bracket runs. Tournament heats use the runner grid instead.");
-            dialInputs[lane] = input;
-            layout.Controls.Add(input, column + 1, 1);
-            layout.Controls.Add(new Label
-            {
-                AutoSize = true,
-                Text = "sec",
-                Margin = new Padding(0, 8, 12, 3)
-            }, column + 2, 1);
         }
+    }
 
-        layout.Controls.Add(new Label
+    private Control CreateOperationsPanel()
+    {
+        var practicePanel = new TableLayoutPanel
         {
+            Dock = DockStyle.Fill,
             AutoSize = true,
-            Text = "Practice lanes:",
-            Margin = labelMargin
-        }, 0, 2);
-        var practiceLanePanel = new FlowLayoutPanel
+            RowCount = 4,
+            ColumnCount = 1,
+            Padding = new Padding(16, 12, 20, 14)
+        };
+        practicePanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        practicePanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        practicePanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        practicePanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        practicePanel.Controls.Add(CreateSectionHeading("Practice Racing", Color.FromArgb(35, 91, 145)), 0, 0);
+        practicePanel.Controls.Add(new Label
+        {
+            Text = "Active lanes",
+            AutoSize = true,
+            ForeColor = SystemColors.GrayText,
+            Margin = new Padding(0, 8, 0, 3)
+        }, 0, 1);
+        var lanePanel = new FlowLayoutPanel
         {
             AutoSize = true,
             Dock = DockStyle.Fill,
-            WrapContents = false,
-            Margin = new Padding(0)
+            WrapContents = true,
+            Margin = new Padding(0, 0, 0, 8)
         };
         for (var lane = 0; lane < LaneCount; lane++)
         {
@@ -343,20 +376,98 @@ public sealed class MainForm : Form
                 AutoSize = true,
                 Checked = true,
                 Enabled = false,
-                Margin = new Padding(3, 6, 16, 3),
+                Margin = new Padding(0, 5, 18, 5),
                 Text = $"Lane {lane + 1}"
             };
-            toolTip.SetToolTip(
-                check,
-                "Select the lanes that must stage for the next manual practice run.");
+            toolTip.SetToolTip(check, "Select the lanes that must stage for the next practice run.");
             practiceLaneChecks[lane] = check;
-            practiceLanePanel.Controls.Add(check);
+            lanePanel.Controls.Add(check);
         }
-        layout.Controls.Add(practiceLanePanel, 1, 2);
-        layout.SetColumnSpan(practiceLanePanel, 6);
+        practicePanel.Controls.Add(lanePanel, 0, 2);
+        practicePanel.Controls.Add(startPracticeButton, 0, 3);
 
-        group.Controls.Add(layout);
-        return group;
+        var tournamentPanel = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            AutoSize = true,
+            RowCount = 4,
+            ColumnCount = 2,
+            Padding = new Padding(20, 12, 16, 14),
+            BackColor = Color.FromArgb(248, 249, 250)
+        };
+        tournamentPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        tournamentPanel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        tournamentPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        tournamentPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        tournamentPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        tournamentPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        var tournamentHeading = CreateSectionHeading("Tournament Racing", Color.FromArgb(39, 122, 79));
+        tournamentPanel.Controls.Add(tournamentHeading, 0, 0);
+        tournamentPanel.SetColumnSpan(tournamentHeading, 2);
+        tournamentPanel.Controls.Add(new Label
+        {
+            Text = "Active tournament",
+            AutoSize = true,
+            ForeColor = SystemColors.GrayText,
+            Margin = new Padding(0, 8, 0, 3)
+        }, 0, 1);
+        tournamentPanel.SetColumnSpan(tournamentPanel.GetControlFromPosition(0, 1)!, 2);
+        tournamentPanel.Controls.Add(tournamentSelector, 0, 2);
+        tournamentPanel.Controls.Add(tournamentButton, 1, 2);
+        tournamentPanel.Controls.Add(runTournamentButton, 0, 3);
+        tournamentPanel.SetColumnSpan(runTournamentButton, 2);
+
+        var operations = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            AutoSize = true,
+            ColumnCount = 2
+        };
+        operations.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 46));
+        operations.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 54));
+        operations.Controls.Add(practicePanel, 0, 0);
+        operations.Controls.Add(tournamentPanel, 1, 0);
+        return operations;
+    }
+
+    private static Label CreateSectionHeading(string text, Color color) => new()
+    {
+        Text = text,
+        AutoSize = true,
+        Font = new Font(SystemFonts.DefaultFont.FontFamily, 12, FontStyle.Bold),
+        ForeColor = color,
+        Margin = new Padding(0)
+    };
+
+    private Control CreateActivityPanel()
+    {
+        var clearButton = new Button { Text = "Clear", AutoSize = true, MinimumSize = new Size(70, 28) };
+        clearButton.Click += (_, _) => activityList.Items.Clear();
+        var header = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            AutoSize = true,
+            ColumnCount = 2,
+            Padding = new Padding(16, 8, 16, 5)
+        };
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        header.Controls.Add(new Label
+        {
+            Text = "Controller Activity",
+            AutoSize = true,
+            Font = new Font(SystemFonts.DefaultFont, FontStyle.Bold),
+            Anchor = AnchorStyles.Left
+        }, 0, 0);
+        header.Controls.Add(clearButton, 1, 0);
+
+        activityList.Margin = new Padding(16, 0, 16, 16);
+        var panel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
+        panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        panel.Controls.Add(header, 0, 0);
+        panel.Controls.Add(activityList, 0, 1);
+        return panel;
     }
 
     protected override void OnFormClosed(FormClosedEventArgs e)
@@ -383,6 +494,98 @@ public sealed class MainForm : Form
             portSelector.SelectedIndex = 0;
         }
     }
+
+    private void TryAutoConnect()
+    {
+        if (connectionRequested)
+        {
+            return;
+        }
+
+        var ports = portSelector.Items.Cast<string>().ToArray();
+        var rememberedPort = ReadRememberedControllerPort();
+        var candidate = rememberedPort is not null
+            ? ports.FirstOrDefault(port => string.Equals(port, rememberedPort, StringComparison.OrdinalIgnoreCase))
+            : null;
+        candidate ??= ports.Length == 1 ? ports[0] : null;
+        if (candidate is null)
+        {
+            if (ports.Length > 1)
+            {
+                AppendLog("Multiple serial ports found. Select the controller port to connect.");
+            }
+            return;
+        }
+
+        portSelector.SelectedItem = candidate;
+        AppendLog($"Trying controller on {candidate}...");
+        ToggleConnection();
+        if (client.IsConnected)
+        {
+            autoConnectDeadline = DateTimeOffset.Now.AddSeconds(6);
+        }
+    }
+
+    private void CheckAutoConnectAttempt()
+    {
+        if (autoConnectDeadline is not { } deadline || DateTimeOffset.Now < deadline)
+        {
+            return;
+        }
+
+        autoConnectDeadline = null;
+        if (client.LastHelloReceivedAt.HasValue || client.LastHeartbeatReceivedAt.HasValue)
+        {
+            RememberConnectedControllerPort();
+            return;
+        }
+
+        var port = portSelector.SelectedItem as string ?? "selected port";
+        client.Disconnect();
+        SetConnectedState(false);
+        AppendLog($"No controller response on {port}; automatic connection stopped.");
+    }
+
+    private void RememberConnectedControllerPort()
+    {
+        if (portSelector.SelectedItem is not string portName ||
+            string.Equals(portName, rememberedControllerPortThisSession, StringComparison.OrdinalIgnoreCase))
+        {
+            autoConnectDeadline = null;
+            return;
+        }
+
+        autoConnectDeadline = null;
+        try
+        {
+            var path = ControllerPortPreferencePath();
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path, portName);
+            rememberedControllerPortThisSession = portName;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            AppendLog($"Could not remember controller port: {exception.Message}");
+        }
+    }
+
+    private static string? ReadRememberedControllerPort()
+    {
+        try
+        {
+            var path = ControllerPortPreferencePath();
+            return File.Exists(path) ? File.ReadAllText(path).Trim() : null;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    private static string ControllerPortPreferencePath() => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "DragWin",
+        "controller-port.txt");
 
     private void RunMainButtonAction(Button button, Action action)
     {
@@ -425,6 +628,7 @@ public sealed class MainForm : Form
                 .Cast<Tournament>()
                 .FirstOrDefault(item => item.Id == selectedId);
         }
+        runTournamentButton.Enabled = tournamentSelector.Items.Count > 0;
     }
 
     private void RunSelectedTournament()
@@ -434,7 +638,11 @@ public sealed class MainForm : Form
             MessageBox.Show(this, "Create or select a tournament first.", Text);
             return;
         }
-        new TournamentRunnerForm(tournament, raceRepository, client).ShowDialog(this);
+        new TournamentRunnerForm(
+            tournament,
+            raceRepository,
+            client,
+            decimal.ToInt32(stagedDelayInput.Value * 1000M)).ShowDialog(this);
         RefreshTournaments();
     }
 
@@ -444,8 +652,10 @@ public sealed class MainForm : Form
         {
             if (connectionRequested)
             {
+                autoConnectDeadline = null;
                 client.Disconnect();
                 SetConnectedState(false);
+                AppendLog("Controller disconnected.");
                 return;
             }
 
@@ -470,7 +680,8 @@ public sealed class MainForm : Form
 
     private bool ApplyRaceSettings()
     {
-        if (modeSelector.SelectedItem is not string mode)
+        if (modeSelector.SelectedItem is not string mode ||
+            treeModeSelector.SelectedItem is not string treeMode)
         {
             return false;
         }
@@ -487,6 +698,12 @@ public sealed class MainForm : Form
         var laneCount = SelectedLaneCount();
         SendCommand("SET", "LANES", laneCount.ToString(CultureInfo.InvariantCulture));
         SendCommand("SET", "MODE", mode);
+        SendCommand("SET", "TREE", treeMode);
+        SendCommand(
+            "SET",
+            "STAGED_DELAY",
+            decimal.ToInt32(stagedDelayInput.Value * 1000M)
+                .ToString(CultureInfo.InvariantCulture));
         SendCommand(
             "SET",
             "DISTANCES",
@@ -655,111 +872,61 @@ public sealed class MainForm : Form
             : $"DEMO: Practice complete — lane {winner.Key} wins.");
     }
 
-    private void ShowDistanceSettings()
+    private void ShowRaceSettings()
     {
-        using var dialog = new Form
-        {
-            Text = "Track distances",
-            StartPosition = FormStartPosition.CenterParent,
-            FormBorderStyle = FormBorderStyle.FixedDialog,
-            MinimizeBox = false,
-            MaximizeBox = false,
-            ShowInTaskbar = false,
-            ClientSize = new Size(330, 135)
-        };
-
-        var trackInput = new NumericUpDown
-        {
-            DecimalPlaces = 3,
-            Increment = 1.000M,
-            Minimum = trackLengthInput.Minimum,
-            Maximum = trackLengthInput.Maximum,
-            Value = trackLengthInput.Value,
-            Width = 100
-        };
-        var trapInput = new NumericUpDown
-        {
-            DecimalPlaces = 3,
-            Increment = 0.100M,
-            Minimum = speedTrapLengthInput.Minimum,
-            Maximum = speedTrapLengthInput.Maximum,
-            Value = speedTrapLengthInput.Value,
-            Width = 100
-        };
-        var okButton = new Button
-        {
-            Text = "OK",
-            DialogResult = DialogResult.OK,
-            AutoSize = true
-        };
-        var cancelButton = new Button
-        {
-            Text = "Cancel",
-            DialogResult = DialogResult.Cancel,
-            AutoSize = true
-        };
-        var layout = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            ColumnCount = 3,
-            RowCount = 3,
-            Padding = new Padding(10)
-        };
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        layout.Controls.Add(new Label { AutoSize = true, Text = "Track length:", Margin = new Padding(3, 8, 6, 3) }, 0, 0);
-        layout.Controls.Add(trackInput, 1, 0);
-        layout.Controls.Add(new Label { AutoSize = true, Text = "in", Margin = new Padding(3, 8, 3, 3) }, 2, 0);
-        layout.Controls.Add(new Label { AutoSize = true, Text = "Speed trap:", Margin = new Padding(3, 8, 6, 3) }, 0, 1);
-        layout.Controls.Add(trapInput, 1, 1);
-        layout.Controls.Add(new Label { AutoSize = true, Text = "in", Margin = new Padding(3, 8, 3, 3) }, 2, 1);
-        var buttons = new FlowLayoutPanel
-        {
-            AutoSize = true,
-            Dock = DockStyle.Right,
-            FlowDirection = FlowDirection.RightToLeft
-        };
-        buttons.Controls.AddRange([cancelButton, okButton]);
-        layout.Controls.Add(buttons, 0, 2);
-        layout.SetColumnSpan(buttons, 3);
-        dialog.Controls.Add(layout);
-        dialog.AcceptButton = okButton;
-        dialog.CancelButton = cancelButton;
-
+        using var dialog = new RaceSettingsForm(
+            modeSelector.SelectedItem as string ?? "BRACKET",
+            SelectedLaneCount(),
+            treeModeSelector.SelectedItem as string ?? "FULL",
+            stagedDelayInput.Value,
+            dialInputs.Select(input => input.Value).ToArray(),
+            trackLengthInput.Value,
+            speedTrapLengthInput.Value,
+            client.IsConnected);
         if (dialog.ShowDialog(this) != DialogResult.OK)
         {
             return;
         }
-        if (trapInput.Value >= trackInput.Value)
+
+        modeSelector.SelectedItem = dialog.RaceMode;
+        laneCountSelector.SelectedItem = dialog.LaneCount.ToString(CultureInfo.InvariantCulture);
+        treeModeSelector.SelectedItem = dialog.TreeMode;
+        stagedDelayInput.Value = dialog.StagedDelaySeconds;
+        trackLengthInput.Value = dialog.TrackLengthInches;
+        speedTrapLengthInput.Value = dialog.SpeedTrapLengthInches;
+        for (var lane = 0; lane < LaneCount; lane++)
         {
-            MessageBox.Show(
-                this,
-                "Speed-trap length must be shorter than the track length.",
-                "Invalid distances");
-            return;
+            dialInputs[lane].Value = dialog.DialSeconds[lane];
         }
 
-        trackLengthInput.Value = trackInput.Value;
-        speedTrapLengthInput.Value = trapInput.Value;
+        UpdateDialInputState();
+        UpdateSettingsSummary();
         AppendLog(
-            $"Configured distances: track {trackLengthInput.Value:0.###} in, " +
-            $"speed trap {speedTrapLengthInput.Value:0.###} in.");
+            $"Settings saved: {dialog.LaneCount} lanes, {dialog.RaceMode}, " +
+            $"{dialog.TreeMode} Tree, {dialog.StagedDelaySeconds:0.000}s staged delay.");
         if (client.IsConnected)
         {
-            SendCommand(
-                "SET",
-                "DISTANCES",
-                ToThousandthsOfAnInch(trackLengthInput.Value),
-                ToThousandthsOfAnInch(speedTrapLengthInput.Value));
+            ApplyRaceSettings();
+        }
+    }
+
+    private void ResetController()
+    {
+        if (MessageBox.Show(
+                this,
+                "Reset the controller and clear its current race state?",
+                "Reset controller",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning,
+                MessageBoxDefaultButton.Button2) == DialogResult.Yes)
+        {
+            SendCommand("RESET");
         }
     }
 
     private void HandleMessage(ProtocolMessage message)
     {
+        MarkControllerReady();
         if (message.Type == "HEARTBEAT")
         {
             UpdateConnectionLabel();
@@ -800,6 +967,30 @@ public sealed class MainForm : Form
             UpdateDistanceFromStatus(message, "TRACK_IN_X1000", trackLengthInput);
             UpdateDistanceFromStatus(message, "TRAP_IN_X1000", speedTrapLengthInput);
             UpdateDialInputState();
+            UpdateSettingsSummary();
+            return;
+        }
+
+        if (message.Parts.Count >= 6 && message.Parts[1] == "SETTINGS")
+        {
+            var fields = new Dictionary<string, string>(StringComparer.Ordinal);
+            for (var index = 2; index + 1 < message.Parts.Count; index += 2)
+            {
+                fields[message.Parts[index]] = message.Parts[index + 1];
+            }
+            if (fields.TryGetValue("TREE", out var treeMode))
+            {
+                treeModeSelector.SelectedItem = treeMode;
+            }
+            if (fields.TryGetValue("STAGED_DELAY_MS", out var stagedDelayText) &&
+                int.TryParse(stagedDelayText, out var stagedDelayMs))
+            {
+                stagedDelayInput.Value = Math.Clamp(
+                    stagedDelayMs / 1000M,
+                    stagedDelayInput.Minimum,
+                    stagedDelayInput.Maximum);
+            }
+            UpdateSettingsSummary();
             return;
         }
 
@@ -851,23 +1042,137 @@ public sealed class MainForm : Form
         form.ShowDialog(this);
     }
 
+    private void ShowProtocolLog()
+    {
+        using var dialog = new Form
+        {
+            Text = "Controller Protocol Log",
+            StartPosition = FormStartPosition.CenterParent,
+            MinimumSize = new Size(760, 480),
+            Size = new Size(900, 620)
+        };
+        var viewer = new TextBox
+        {
+            Dock = DockStyle.Fill,
+            Multiline = true,
+            ReadOnly = true,
+            ScrollBars = ScrollBars.Both,
+            WordWrap = false,
+            Font = new Font(FontFamily.GenericMonospace, 9),
+            Text = logTextBox.Text
+        };
+        var pathLabel = new Label
+        {
+            Text = client.LogPath,
+            AutoEllipsis = true,
+            Dock = DockStyle.Fill,
+            ForeColor = SystemColors.GrayText,
+            TextAlign = ContentAlignment.MiddleLeft
+        };
+        var closeButton = new Button { Text = "Close", AutoSize = true, MinimumSize = new Size(80, 30) };
+        closeButton.Click += (_, _) => dialog.Close();
+        var footer = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            AutoSize = true,
+            ColumnCount = 2,
+            Padding = new Padding(0, 8, 0, 0)
+        };
+        footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        footer.Controls.Add(pathLabel, 0, 0);
+        footer.Controls.Add(closeButton, 1, 0);
+        var layout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            RowCount = 2,
+            ColumnCount = 1,
+            Padding = new Padding(12)
+        };
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.Controls.Add(viewer, 0, 0);
+        layout.Controls.Add(footer, 0, 1);
+        dialog.Controls.Add(layout);
+        dialog.CancelButton = closeButton;
+
+        using var refreshTimer = new System.Windows.Forms.Timer { Interval = 500 };
+        refreshTimer.Tick += (_, _) =>
+        {
+            if (viewer.Text == logTextBox.Text)
+            {
+                return;
+            }
+            var atEnd = viewer.SelectionStart >= viewer.TextLength - 1;
+            viewer.Text = logTextBox.Text;
+            if (atEnd)
+            {
+                viewer.SelectionStart = viewer.TextLength;
+                viewer.ScrollToCaret();
+            }
+        };
+        refreshTimer.Start();
+        dialog.ShowDialog(this);
+    }
+
     private void SetConnectedState(bool connected)
     {
         connectionRequested = connected;
+        if (!connected)
+        {
+            controllerReady = false;
+        }
         connectButton.Text = connected ? "Disconnect" : "Connect";
+        UpdateConnectButtonAppearance();
         portSelector.Enabled = !connected;
         refreshButton.Enabled = !connected;
-        pingButton.Enabled = connected;
-        statusButton.Enabled = connected;
-        resetButton.Enabled = connected;
-        testSensorsButton.Enabled = connected;
+        pingMenuItem.Enabled = connected;
+        statusMenuItem.Enabled = connected;
+        resetMenuItem.Enabled = connected;
+        testSensorsMenuItem.Enabled = connected && controllerReady;
         modeSelector.Enabled = true;
         laneCountSelector.Enabled = true;
-        applySettingsButton.Enabled = connected;
-        startPracticeButton.Enabled = connected;
+        treeModeSelector.Enabled = true;
+        stagedDelayInput.Enabled = true;
+        startPracticeButton.Enabled = connected && controllerReady;
         UpdateDialInputState();
         UpdateConnectionLabel();
         connectionLabel.Refresh();
+    }
+
+    private void MarkControllerReady()
+    {
+        if (!client.IsConnected)
+        {
+            return;
+        }
+
+        controllerReady = true;
+        startPracticeButton.Enabled = true;
+        testSensorsMenuItem.Enabled = true;
+        RememberConnectedControllerPort();
+    }
+
+    private void UpdateConnectButtonAppearance()
+    {
+        if (!connectButton.Enabled)
+        {
+            connectButton.BackColor = Color.FromArgb(245, 246, 247);
+            connectButton.ForeColor = Color.FromArgb(54, 60, 66);
+            connectButton.FlatAppearance.BorderColor = Color.FromArgb(160, 166, 172);
+        }
+        else if (connectionRequested)
+        {
+            connectButton.BackColor = SystemColors.Control;
+            connectButton.ForeColor = Color.FromArgb(139, 32, 32);
+            connectButton.FlatAppearance.BorderColor = Color.FromArgb(158, 45, 45);
+        }
+        else
+        {
+            connectButton.BackColor = UiStyles.BlueAction;
+            connectButton.ForeColor = Color.White;
+            connectButton.FlatAppearance.BorderColor = ControlPaint.Dark(UiStyles.BlueAction);
+        }
     }
 
     private void UpdateConnectionLabel()
@@ -875,12 +1180,16 @@ public sealed class MainForm : Form
         if (!connectionRequested)
         {
             connectionLabel.Text = "Disconnected";
+            connectionLabel.BackColor = Color.FromArgb(235, 237, 239);
+            connectionLabel.ForeColor = Color.FromArgb(92, 99, 106);
             return;
         }
 
         if (!client.IsConnected)
         {
             connectionLabel.Text = "Connected — serial port not open";
+            connectionLabel.BackColor = Color.FromArgb(252, 222, 222);
+            connectionLabel.ForeColor = Color.FromArgb(139, 32, 32);
             return;
         }
 
@@ -889,13 +1198,33 @@ public sealed class MainForm : Form
             connectionLabel.Text = client.LastHelloReceivedAt.HasValue
                 ? "Connected — waiting for heartbeat"
                 : "Connected";
+            connectionLabel.BackColor = Color.FromArgb(255, 236, 179);
+            connectionLabel.ForeColor = Color.FromArgb(97, 66, 0);
             return;
         }
 
         var age = DateTimeOffset.Now - heartbeatAt;
-        connectionLabel.Text = age.TotalSeconds > 3
-            ? $"Connected — controller stale {age.TotalSeconds:0}s"
-            : "Connected — controller heartbeat OK";
+        if (age.TotalSeconds > 3)
+        {
+            connectionLabel.Text = $"Connected — controller stale {age.TotalSeconds:0}s";
+            connectionLabel.BackColor = Color.FromArgb(252, 222, 222);
+            connectionLabel.ForeColor = Color.FromArgb(139, 32, 32);
+        }
+        else
+        {
+            connectionLabel.Text = "Connected — controller ready";
+            connectionLabel.BackColor = Color.FromArgb(218, 242, 225);
+            connectionLabel.ForeColor = Color.FromArgb(22, 92, 55);
+        }
+    }
+
+    private void UpdateSettingsSummary()
+    {
+        var mode = modeSelector.SelectedItem as string ?? "BRACKET";
+        var tree = treeModeSelector.SelectedItem as string ?? "FULL";
+        settingsSummaryLabel.Text =
+            $"{SelectedLaneCount()} lanes  |  {mode.Replace('_', ' ')}  |  " +
+            $"{tree} Tree  |  {stagedDelayInput.Value:0.000}s delay";
     }
 
     private void UpdateDialInputState()
@@ -1009,6 +1338,19 @@ public sealed class MainForm : Form
     private void AppendLog(string text)
     {
         logTextBox.AppendText($"{DateTime.Now:HH:mm:ss.fff} {text}{Environment.NewLine}");
+        if (text.StartsWith("< ", StringComparison.Ordinal) ||
+            text.StartsWith("> ", StringComparison.Ordinal) ||
+            text.StartsWith("DEMO < ", StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        activityList.Items.Add($"{DateTime.Now:HH:mm:ss}  {text}");
+        while (activityList.Items.Count > 200)
+        {
+            activityList.Items.RemoveAt(0);
+        }
+        activityList.TopIndex = Math.Max(0, activityList.Items.Count - 1);
     }
 
     private void PostToUi(Action action)

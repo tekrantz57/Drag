@@ -19,6 +19,19 @@
 - Reserve Mega D2-D9 as the tentative eight-input map for two future split
   sensors per lane, pending confirmation of their locations and purpose.
 
+## Venue rule decisions
+
+- Decide whether to enable a staging timeout after one or more lanes stage.
+  The current controller waits indefinitely until every participating lane is
+  staged, then uses the operator-configured staged delay.
+- Decide whether deep staging is allowed. The current start requires both the
+  pre-stage and stage sensors to remain blocked through the staged delay.
+- Confirm whether a bye car must stage and take the Tree cleanly. The current
+  tournament model guarantees its advancement even after a red light or DNF.
+- Decide how a four-lane heat should fill a second advancing position when
+  fewer than two cars receive controller placements. DNFs are intentionally
+  unplaced because the current sensor set cannot order them defensibly.
+
 ## Intermediate track sensors
 
 - Investigate the two intermediate sensors expected on the local track and

@@ -4,17 +4,60 @@ namespace DragWin;
 
 public sealed class TournamentRunnerForm : Form
 {
+    private enum RunnerPhase
+    {
+        ChoosingLanes,
+        ReadyToStage,
+        WaitingForStage,
+        Staged,
+        Racing,
+        ResultsReady,
+        Confirmed
+    }
+
     private readonly Tournament tournament;
     private readonly RaceRepository repository;
     private readonly DragSerialClient client;
+    private readonly int stagedDelayMilliseconds;
     private readonly TournamentPlanner planner = new();
-    private readonly Label heading = new() { AutoSize = true, Font = new Font(SystemFonts.DefaultFont, FontStyle.Bold) };
+    private readonly Label heading = new()
+    {
+        AutoSize = true,
+        Font = new Font(SystemFonts.DefaultFont.FontFamily, 14, FontStyle.Bold)
+    };
+    private readonly Label progressLabel = new() { AutoSize = true, ForeColor = SystemColors.GrayText };
+    private readonly Label phaseBanner = new()
+    {
+        Dock = DockStyle.Fill,
+        Height = 42,
+        Padding = new Padding(12, 10, 12, 8),
+        Font = new Font(SystemFonts.DefaultFont, FontStyle.Bold)
+    };
+    private readonly Label connectionLabel = new()
+    {
+        AutoSize = true,
+        Font = new Font(SystemFonts.DefaultFont, FontStyle.Bold)
+    };
+    private readonly Label resultsSummary = new()
+    {
+        Dock = DockStyle.Fill,
+        AutoSize = true,
+        Padding = new Padding(0, 6, 0, 3),
+        Font = new Font(SystemFonts.DefaultFont, FontStyle.Bold),
+        Visible = false
+    };
     private readonly DataGridView lanesGrid = new()
     {
         Dock = DockStyle.Fill,
         AllowUserToAddRows = false,
         AllowUserToDeleteRows = false,
         AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill
+    };
+    private readonly ListBox timeline = new()
+    {
+        Dock = DockStyle.Fill,
+        IntegralHeight = false,
+        BorderStyle = BorderStyle.FixedSingle
     };
     private readonly TextBox eventLog = new()
     {
@@ -23,45 +66,95 @@ public sealed class TournamentRunnerForm : Form
         ReadOnly = true,
         ScrollBars = ScrollBars.Vertical
     };
-    private readonly Button sendHeatButton = new() { Text = "Send Heat to Controller", AutoSize = true };
-    private readonly Button demoHeatButton = new() { Text = "Demo Heat", AutoSize = true };
+    private readonly Button sendHeatButton = new()
+    {
+        Text = "Arm Heat",
+        AutoSize = true,
+        BackColor = Color.FromArgb(35, 91, 145),
+        ForeColor = Color.White,
+        FlatStyle = FlatStyle.Flat,
+        Padding = new Padding(12, 4, 12, 4)
+    };
     private readonly Button confirmLaneChoiceButton = new()
     {
         Text = "Confirm Lane Choice",
         AutoSize = true,
         Visible = false
     };
-    private readonly Button confirmButton = new() { Text = "Confirm Results / Advance", AutoSize = true, Enabled = false };
+    private readonly Button confirmButton = new()
+    {
+        Text = "Confirm Results",
+        AutoSize = true,
+        Enabled = false,
+        BackColor = Color.FromArgb(39, 122, 79),
+        ForeColor = Color.White,
+        FlatStyle = FlatStyle.Flat,
+        Padding = new Padding(12, 4, 12, 4)
+    };
+    private readonly Button rerunButton = new() { Text = "Re-run Heat", AutoSize = true, Visible = false };
+    private readonly Button historyButton = new() { Text = "Race History", AutoSize = true };
+    private readonly SplitContainer detailsSplit = new()
+    {
+        Dock = DockStyle.Fill,
+        Orientation = Orientation.Horizontal,
+        SplitterDistance = 125,
+        Panel2Collapsed = true
+    };
+    private readonly System.Windows.Forms.Timer connectionTimer = new() { Interval = 1000 };
     private RoundPlan round = null!;
     private HeatPlan heat = null!;
     private int heatIndex;
     private readonly Dictionary<int, LiveLaneResult> liveResults = [];
-    private int nextFinishOrder = 1;
+    private readonly HashSet<long> resultAdvancerIds = [];
     private LaneChoiceSession? laneChoiceSession;
     private bool confirmingHeat;
     private bool completionReportShown;
     private bool runnerActionRunning;
     private DateTimeOffset lastRunnerButtonActionAt;
+    private RunnerPhase phase;
 
     public TournamentRunnerForm(
         Tournament tournament,
         RaceRepository repository,
-        DragSerialClient client)
+        DragSerialClient client,
+        int stagedDelayMilliseconds)
     {
         this.tournament = tournament;
         this.repository = repository;
         this.client = client;
-        Text = $"Run Tournament — {tournament.Name}";
-        MinimumSize = new Size(900, 620);
+        this.stagedDelayMilliseconds = Math.Clamp(stagedDelayMilliseconds, 0, 5000);
+        Text = $"Run Tournament - {tournament.Name}";
+        MinimumSize = new Size(980, 680);
+        Size = new Size(1180, 760);
         StartPosition = FormStartPosition.CenterParent;
 
-        lanesGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Choice", HeaderText = "Choice", ReadOnly = true });
+        confirmLaneChoiceButton.BackColor = Color.FromArgb(35, 91, 145);
+        confirmLaneChoiceButton.ForeColor = Color.White;
+        confirmLaneChoiceButton.FlatStyle = FlatStyle.Flat;
+        confirmLaneChoiceButton.Padding = new Padding(12, 4, 12, 4);
+        UiStyles.ConfigurePrimaryButton(confirmLaneChoiceButton, UiStyles.BlueAction);
+        UiStyles.ConfigurePrimaryButton(sendHeatButton, UiStyles.BlueAction);
+        UiStyles.ConfigurePrimaryButton(confirmButton, UiStyles.GreenAction);
+
+        lanesGrid.BackgroundColor = SystemColors.Window;
+        lanesGrid.BorderStyle = BorderStyle.Fixed3D;
+        lanesGrid.RowHeadersVisible = false;
+        lanesGrid.AllowUserToResizeRows = false;
+        lanesGrid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+        lanesGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "Choice",
+            HeaderText = "Choice",
+            ReadOnly = true,
+            FillWeight = 45
+        });
         var laneColumn = new DataGridViewComboBoxColumn
         {
             Name = "Lane",
             HeaderText = "Lane",
             ValueType = typeof(int),
-            DisplayStyle = DataGridViewComboBoxDisplayStyle.DropDownButton
+            DisplayStyle = DataGridViewComboBoxDisplayStyle.DropDownButton,
+            FillWeight = 38
         };
         foreach (var lane in tournament.LaneCount == 2
                      ? new[] { 1, 4 }
@@ -70,41 +163,126 @@ public sealed class TournamentRunnerForm : Form
             laneColumn.Items.Add(lane);
         }
         lanesGrid.Columns.Add(laneColumn);
-        lanesGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Racer", HeaderText = "Racer", ReadOnly = true });
-        lanesGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Car", HeaderText = "Car", ReadOnly = true });
+        lanesGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "Entrant",
+            HeaderText = "Racer / Car",
+            ReadOnly = true,
+            FillWeight = 125
+        });
         lanesGrid.Columns.Add(new DataGridViewTextBoxColumn
         {
             Name = "Dial",
             HeaderText = "Dial",
-            ToolTipText = "Per-run dial-in override in seconds. This does not change the car default."
+            ToolTipText = "Per-run dial-in override in seconds. This does not change the car default.",
+            FillWeight = 45
         });
-        lanesGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Reaction", HeaderText = "Reaction (s)", ReadOnly = true });
-        lanesGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Elapsed", HeaderText = "ET (s)", ReadOnly = true });
-        lanesGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Speed", HeaderText = "MPH", ReadOnly = true });
-        lanesGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Result", HeaderText = "Result", ReadOnly = true });
-        lanesGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Status", HeaderText = "Status", ReadOnly = true });
+        lanesGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Reaction", HeaderText = "RT", ReadOnly = true, FillWeight = 45 });
+        lanesGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Elapsed", HeaderText = "ET", ReadOnly = true, FillWeight = 45 });
+        lanesGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Speed", HeaderText = "MPH", ReadOnly = true, FillWeight = 45 });
+        lanesGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Result", HeaderText = "Outcome", ReadOnly = true, FillWeight = 85 });
+        lanesGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Status", HeaderText = "Status", ReadOnly = true, FillWeight = 100 });
 
         sendHeatButton.Click += (_, _) => RunRunnerButtonAction(sendHeatButton, SendHeat);
-        demoHeatButton.Click += (_, _) => RunRunnerButtonAction(demoHeatButton, DemoHeat);
         confirmLaneChoiceButton.Click += (_, _) => RunRunnerButtonAction(confirmLaneChoiceButton, ConfirmLaneChoice);
         confirmButton.Click += (_, _) => ConfirmHeat();
+        rerunButton.Click += (_, _) => PrepareRerun();
+        historyButton.Click += (_, _) => ShowHistory();
         lanesGrid.DataError += LanesGridOnDataError;
         client.MessageReceived += ClientOnMessageReceived;
-        FormClosed += (_, _) => client.MessageReceived -= ClientOnMessageReceived;
+        connectionTimer.Tick += (_, _) => UpdateConnectionStatus();
+        connectionTimer.Start();
+        FormClosed += (_, _) =>
+        {
+            connectionTimer.Stop();
+            client.MessageReceived -= ClientOnMessageReceived;
+        };
 
-        var buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true };
-        buttons.Controls.AddRange([confirmLaneChoiceButton, sendHeatButton, demoHeatButton, confirmButton]);
-        var split = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, SplitterDistance = 300 };
+        var menu = new MenuStrip();
+        var testMenu = new ToolStripMenuItem("Test");
+        var demoMenuItem = new ToolStripMenuItem("Generate Demo Heat Results");
+        demoMenuItem.Click += (_, _) => RunRunnerButtonAction(sendHeatButton, DemoHeat);
+        testMenu.DropDownItems.Add(demoMenuItem);
+        menu.Items.Add(testMenu);
+
+        var showRawCheck = new CheckBox { Text = "Show raw protocol", AutoSize = true, Dock = DockStyle.Right };
+        showRawCheck.CheckedChanged += (_, _) => detailsSplit.Panel2Collapsed = !showRawCheck.Checked;
+        var timelineHeader = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, ColumnCount = 2 };
+        timelineHeader.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        timelineHeader.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        timelineHeader.Controls.Add(new Label
+        {
+            Text = "Race Timeline",
+            AutoSize = true,
+            Font = new Font(SystemFonts.DefaultFont, FontStyle.Bold)
+        }, 0, 0);
+        timelineHeader.Controls.Add(showRawCheck, 1, 0);
+        var timelinePanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
+        timelinePanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        timelinePanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        timelinePanel.Controls.Add(timelineHeader, 0, 0);
+        timelinePanel.Controls.Add(timeline, 0, 1);
+        detailsSplit.Panel1.Controls.Add(timelinePanel);
+        detailsSplit.Panel2.Controls.Add(eventLog);
+
+        var buttons = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, ColumnCount = 2 };
+        buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        buttons.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        var secondaryButtons = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = false };
+        secondaryButtons.Controls.AddRange([historyButton, rerunButton]);
+        var primaryButtons = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            AutoSize = true,
+            WrapContents = false,
+            FlowDirection = FlowDirection.RightToLeft
+        };
+        primaryButtons.Controls.AddRange([confirmButton, sendHeatButton, confirmLaneChoiceButton]);
+        buttons.Controls.Add(secondaryButtons, 0, 0);
+        buttons.Controls.Add(primaryButtons, 1, 0);
+
+        var titleRow = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, ColumnCount = 2 };
+        titleRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        titleRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        var titleStack = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            AutoSize = true,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false
+        };
+        titleStack.Controls.Add(heading);
+        titleStack.Controls.Add(progressLabel);
+        titleRow.Controls.Add(titleStack, 0, 0);
+        titleRow.Controls.Add(connectionLabel, 1, 0);
+
+        var split = new SplitContainer
+        {
+            Dock = DockStyle.Fill,
+            Orientation = Orientation.Horizontal
+        };
         split.Panel1.Controls.Add(lanesGrid);
-        split.Panel2.Controls.Add(eventLog);
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3, ColumnCount = 1, Padding = new Padding(8) };
+        split.Panel2.Controls.Add(detailsSplit);
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 5, ColumnCount = 1, Padding = new Padding(12) };
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        layout.Controls.Add(heading, 0, 0);
-        layout.Controls.Add(split, 0, 1);
-        layout.Controls.Add(buttons, 0, 2);
-        Controls.Add(layout);
+        layout.Controls.Add(titleRow, 0, 0);
+        layout.Controls.Add(phaseBanner, 0, 1);
+        layout.Controls.Add(resultsSummary, 0, 2);
+        layout.Controls.Add(split, 0, 3);
+        layout.Controls.Add(buttons, 0, 4);
+        var shell = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
+        shell.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        shell.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        shell.Controls.Add(menu, 0, 0);
+        shell.Controls.Add(layout, 0, 1);
+        Controls.Add(shell);
+        Shown += (_, _) => UiStyles.SetSplitterDistanceWhenSized(split, 330, 230, 150);
+        MainMenuStrip = menu;
+        UpdateConnectionStatus();
         LoadCurrentRound();
     }
 
@@ -121,17 +299,23 @@ public sealed class TournamentRunnerForm : Form
     {
         heat = NormalizeFinalHeat(round.Heats[heatIndex]);
         liveResults.Clear();
-        nextFinishOrder = 1;
+        resultAdvancerIds.Clear();
         confirmButton.Enabled = false;
+        confirmButton.Visible = false;
+        rerunButton.Visible = false;
+        resultsSummary.Visible = false;
+        timeline.Items.Clear();
         lanesGrid.Rows.Clear();
-        heading.Text = $"{tournament.Name} — Round {round.RoundNumber}, Heat {heat.HeatNumber} — {heat.AdvanceCount} advance";
+        heading.Text = tournament.Name;
+        progressLabel.Text =
+            $"Round {round.RoundNumber}  |  Heat {heat.HeatNumber} of {round.Heats.Count}  |  " +
+            $"{heat.AdvanceCount} advance";
         foreach (var entry in heat.Entries.OrderBy(entry => entry.LaneChoiceOrder))
         {
             var row = lanesGrid.Rows[lanesGrid.Rows.Add(
                 entry.LaneChoiceOrder,
                 entry.LaneNumber,
-                entry.Car.RacerName,
-                entry.Car.Name,
+                $"{entry.Car.RacerName} / {entry.Car.Name}",
                 (entry.DialMilliseconds / 1000M).ToString("0.000", CultureInfo.CurrentCulture),
                 "",
                 "",
@@ -142,6 +326,7 @@ public sealed class TournamentRunnerForm : Form
             liveResults[entry.LaneNumber] = new LiveLaneResult();
         }
         InitializeLaneChoices();
+        AddTimeline($"Round {round.RoundNumber}, heat {heat.HeatNumber} loaded with {heat.Entries.Count} entrants.");
         UpdateHeatActionButtons();
     }
 
@@ -174,6 +359,7 @@ public sealed class TournamentRunnerForm : Form
                         ? "BYE PASS — random lane"
                         : "Round-one random lane";
             }
+            SetPhase(RunnerPhase.ReadyToStage);
             UpdateHeatActionButtons();
             return;
         }
@@ -182,6 +368,7 @@ public sealed class TournamentRunnerForm : Form
             heat.Entries,
             tournament.LaneCount == 2 ? [1, 4] : [1, 2, 3, 4]);
         confirmLaneChoiceButton.Visible = true;
+        SetPhase(RunnerPhase.ChoosingLanes);
         RefreshLaneChoiceGrid();
     }
 
@@ -202,6 +389,7 @@ public sealed class TournamentRunnerForm : Form
                 cell.Items.Add(lane);
                 cell.ReadOnly = true;
                 row.Cells["Status"].Value = "Lane choice locked";
+                row.DefaultCellStyle.BackColor = Color.FromArgb(235, 245, 238);
             }
             else
             {
@@ -212,6 +400,9 @@ public sealed class TournamentRunnerForm : Form
                 cell.ReadOnly = laneChoiceSession.CurrentCarId != entry.Car.Id;
                 row.Cells["Status"].Value =
                     cell.ReadOnly ? "Waiting for earlier chooser" : "Choose lane now";
+                row.DefaultCellStyle.BackColor = cell.ReadOnly
+                    ? SystemColors.Window
+                    : Color.FromArgb(255, 244, 214);
             }
             cell.Value = lane;
         }
@@ -220,15 +411,76 @@ public sealed class TournamentRunnerForm : Form
         confirmLaneChoiceButton.Text = laneChoiceSession.IsComplete
             ? "Lane Choices Complete"
             : "Confirm Current Lane Choice";
+        if (laneChoiceSession.IsComplete)
+        {
+            SetPhase(RunnerPhase.ReadyToStage);
+        }
         UpdateHeatActionButtons();
     }
 
     private void UpdateHeatActionButtons()
     {
         var laneChoicesComplete = laneChoiceSession is null || laneChoiceSession.IsComplete;
-        var canStartHeat = laneChoicesComplete && !confirmingHeat && !runnerActionRunning;
+        var canStartHeat = laneChoicesComplete && !confirmingHeat && !runnerActionRunning &&
+            phase == RunnerPhase.ReadyToStage;
         sendHeatButton.Enabled = canStartHeat;
-        demoHeatButton.Enabled = canStartHeat;
+        sendHeatButton.Visible = phase is RunnerPhase.ReadyToStage or RunnerPhase.WaitingForStage or RunnerPhase.Staged or RunnerPhase.Racing;
+        confirmLaneChoiceButton.Visible = phase == RunnerPhase.ChoosingLanes;
+        confirmButton.Visible = phase == RunnerPhase.ResultsReady;
+        rerunButton.Visible = phase == RunnerPhase.ResultsReady;
+    }
+
+    private void SetPhase(RunnerPhase nextPhase)
+    {
+        phase = nextPhase;
+        (phaseBanner.Text, phaseBanner.BackColor, phaseBanner.ForeColor) = nextPhase switch
+        {
+            RunnerPhase.ChoosingLanes => ("CHOOSE LANES  |  The highlighted entrant chooses now", Color.FromArgb(255, 236, 179), Color.FromArgb(97, 66, 0)),
+            RunnerPhase.ReadyToStage => ("READY  |  Verify lanes and dial-ins, then arm the heat", Color.FromArgb(218, 235, 250), Color.FromArgb(24, 71, 112)),
+            RunnerPhase.WaitingForStage => ("STAGING  |  Waiting for all active lanes", Color.FromArgb(255, 236, 179), Color.FromArgb(97, 66, 0)),
+            RunnerPhase.Staged => ("ALL LANES STAGED  |  Tree sequence pending", Color.FromArgb(218, 235, 250), Color.FromArgb(24, 71, 112)),
+            RunnerPhase.Racing => ("RACE ACTIVE", Color.FromArgb(218, 235, 250), Color.FromArgb(24, 71, 112)),
+            RunnerPhase.ResultsReady => ("RESULTS READY  |  Review advancement before confirming", Color.FromArgb(218, 242, 225), Color.FromArgb(22, 92, 55)),
+            RunnerPhase.Confirmed => ("RESULTS CONFIRMED", Color.FromArgb(218, 242, 225), Color.FromArgb(22, 92, 55)),
+            _ => ("CONTROLLER ERROR  |  Review the timeline", Color.FromArgb(252, 222, 222), Color.FromArgb(139, 32, 32))
+        };
+
+        var showRaceData = nextPhase is RunnerPhase.Racing or RunnerPhase.ResultsReady or RunnerPhase.Confirmed;
+        lanesGrid.Columns["Choice"]!.Visible = nextPhase == RunnerPhase.ChoosingLanes;
+        lanesGrid.Columns["Reaction"]!.Visible = showRaceData;
+        lanesGrid.Columns["Elapsed"]!.Visible = showRaceData;
+        lanesGrid.Columns["Speed"]!.Visible = showRaceData;
+        lanesGrid.Columns["Result"]!.Visible = showRaceData;
+        lanesGrid.Columns["Dial"]!.ReadOnly = nextPhase != RunnerPhase.ReadyToStage;
+        UpdateHeatActionButtons();
+    }
+
+    private void UpdateConnectionStatus()
+    {
+        if (!client.IsConnected)
+        {
+            connectionLabel.Text = "Controller disconnected";
+            connectionLabel.ForeColor = Color.FromArgb(158, 45, 45);
+            return;
+        }
+
+        if (client.LastHeartbeatReceivedAt is not { } heartbeatAt)
+        {
+            connectionLabel.Text = "Controller connected - waiting for heartbeat";
+            connectionLabel.ForeColor = Color.FromArgb(145, 91, 0);
+            return;
+        }
+
+        var age = DateTimeOffset.Now - heartbeatAt;
+        if (age.TotalSeconds > 3)
+        {
+            connectionLabel.Text = $"Controller stale ({age.TotalSeconds:0}s)";
+            connectionLabel.ForeColor = Color.FromArgb(158, 45, 45);
+            return;
+        }
+
+        connectionLabel.Text = "Controller ready";
+        connectionLabel.ForeColor = Color.FromArgb(39, 122, 79);
     }
 
     private bool ConfirmLaneChoice()
@@ -259,7 +511,7 @@ public sealed class TournamentRunnerForm : Form
         }
 
         var chooser = ((RoundEntry)row.Tag!).Car.DisplayName;
-        Append(displaced.HasValue
+        AddTimeline(displaced.HasValue
             ? $"{chooser} chose lane {selectedLane}; displaced car moved to lane {originalLane}."
             : $"{chooser} chose lane {selectedLane}.");
         RefreshLaneChoiceGrid();
@@ -320,20 +572,30 @@ public sealed class TournamentRunnerForm : Form
 
         client.Send("SET", "LANES", tournament.LaneCount.ToString());
         client.Send("SET", "MODE", "BRACKET");
+        client.Send("SET", "TREE", "FULL");
+        client.Send(
+            "SET", "STAGED_DELAY",
+            stagedDelayMilliseconds.ToString(CultureInfo.InvariantCulture));
         client.Send("SET", "HEAT_LANES", string.Join(',', heat.Entries.Select(entry => entry.LaneNumber).Order()));
         foreach (var entry in heat.Entries)
         {
             client.Send("SET", "DIAL", entry.LaneNumber.ToString(), entry.DialMilliseconds.ToString());
         }
         client.Send("RESET");
-        Append("Heat configuration sent. Stage only the displayed lanes.");
+        AddTimeline("Heat armed. Stage only the displayed lanes.");
+        SetPhase(RunnerPhase.WaitingForStage);
         sendHeatButton.Enabled = false;
-        demoHeatButton.Enabled = false;
+        UpdateHeatActionButtons();
         return true;
     }
 
     private bool DemoHeat()
     {
+        if (phase != RunnerPhase.ReadyToStage)
+        {
+            MessageBox.Show(this, "The demo can only be generated while a heat is ready to stage.", Text);
+            return false;
+        }
         if (laneChoiceSession is { IsComplete: false })
         {
             MessageBox.Show(this, "Complete the ordered lane choices first.", Text);
@@ -343,9 +605,9 @@ public sealed class TournamentRunnerForm : Form
         var assignments = ReadAssignments();
         if (assignments is null || !ApplyHeatGridInputs(assignments)) return false;
 
-        Append("DEMO: Simulated heat results generated. Confirm results to advance.");
+        AddTimeline("TEST: Simulated heat results generated.");
         sendHeatButton.Enabled = false;
-        demoHeatButton.Enabled = false;
+        SetPhase(RunnerPhase.Racing);
         foreach (var message in DemoHeatSimulator.CreateBracketHeatMessages(heat))
         {
             ProcessMessage(message);
@@ -370,7 +632,6 @@ public sealed class TournamentRunnerForm : Form
                 }).ToArray()
         };
         liveResults.Clear();
-        nextFinishOrder = 1;
         foreach (var entry in heat.Entries) liveResults[entry.LaneNumber] = new LiveLaneResult();
         UpdateStatusCells();
         return true;
@@ -468,12 +729,23 @@ public sealed class TournamentRunnerForm : Form
         }
 
         Append(message.Encode());
+        if (message.Type == "ERROR")
+        {
+            phaseBanner.Text = "CONTROLLER ERROR  |  Review the timeline before continuing";
+            phaseBanner.BackColor = Color.FromArgb(252, 222, 222);
+            phaseBanner.ForeColor = Color.FromArgb(139, 32, 32);
+            AddTimeline($"Controller error: {string.Join(' ', message.Parts.Skip(1))}");
+        }
         if (message.Parts.Count >= 4 && message.Parts[1] == "LANE" &&
             int.TryParse(message.Parts[2], out var lane) &&
             liveResults.TryGetValue(lane, out var result))
         {
             var kind = message.Parts[3];
-            if (message.Type == "EVENT" && kind == "FOUL") result.Fouled = true;
+            if (message.Type == "EVENT" && kind == "FOUL")
+            {
+                result.Fouled = true;
+                AddTimeline($"Lane {lane} red-lighted.");
+            }
             if (message.Type == "EVENT" && kind == "REACTION_US" && message.Parts.Count > 4 &&
                 long.TryParse(message.Parts[4], out var reaction)) result.ReactionUs = reaction;
             if (message.Type == "RESULT" && kind == "ELAPSED_US" && message.Parts.Count > 4 &&
@@ -481,10 +753,7 @@ public sealed class TournamentRunnerForm : Form
             {
                 result.Finished = true;
                 result.ElapsedUs = elapsed;
-                if (result.FinishOrder == 0)
-                {
-                    result.FinishOrder = nextFinishOrder++;
-                }
+                AddTimeline($"Lane {lane} finished in {FormatSeconds(elapsed)} seconds.");
             }
             if (message.Type == "RESULT" && kind == "BREAKOUT_US" && message.Parts.Count > 4 &&
                 long.TryParse(message.Parts[4], out var breakout)) result.BreakoutUs = breakout;
@@ -514,12 +783,38 @@ public sealed class TournamentRunnerForm : Form
             liveResults.TryGetValue(placedLane, out var placed))
         {
             placed.Place = place;
+            placed.FinishOrder = place;
+            AddTimeline($"Lane {placedLane} placed #{place}.");
             UpdateStatusCells();
         }
         if (message.Type == "EVENT" && message.Parts.Count >= 3 &&
-            message.Parts[1] == "TREE" && message.Parts[2] == "RACE_COMPLETE")
+            message.Parts[1] == "TREE")
         {
-            confirmButton.Enabled = true;
+            switch (message.Parts[2])
+            {
+                case "WAITING_FOR_ALL_LANES":
+                    SetPhase(RunnerPhase.WaitingForStage);
+                    AddTimeline("Controller is waiting for all active lanes to stage.");
+                    break;
+                case "ALL_LANES_STAGED":
+                    SetPhase(RunnerPhase.Staged);
+                    AddTimeline($"All lanes staged. Tree starts after {stagedDelayMilliseconds} ms.");
+                    break;
+                case "BRACKET_START":
+                case "HEADS_UP_START":
+                    SetPhase(RunnerPhase.Racing);
+                    AddTimeline("Tree sequence started.");
+                    break;
+                case "STAGING_ABORTED":
+                    SetPhase(RunnerPhase.WaitingForStage);
+                    AddTimeline("Staging was aborted because a car backed out.");
+                    break;
+                case "RACE_COMPLETE":
+                    SetPhase(RunnerPhase.ResultsReady);
+                    ShowResultsSummary();
+                    AddTimeline("Race complete. Review the results before confirming advancement.");
+                    break;
+            }
         }
     }
 
@@ -536,9 +831,20 @@ public sealed class TournamentRunnerForm : Form
             row.Cells["Status"].Value = result.Fouled ? "FOUL" :
                 result.BreakoutUs.HasValue ? $"Breakout by {FormatSeconds(result.BreakoutUs.Value)}" :
                 result.DidNotFinish ? "DNF" :
-                result.Finished ? $"Finished #{result.FinishOrder}" :
+                result.Finished && result.FinishOrder > 0 ? $"Placed #{result.FinishOrder}" :
+                result.Finished ? "Finished; awaiting placement" :
                 result.ReactionUs.HasValue ? $"Reaction {FormatSeconds(result.ReactionUs.Value)}" :
                 ((RoundEntry)row.Tag!).IsBye ? "BYE PASS" : "Running";
+
+            if (phase == RunnerPhase.ResultsReady)
+            {
+                var entry = (RoundEntry)row.Tag!;
+                row.DefaultCellStyle.BackColor = resultAdvancerIds.Contains(entry.Car.Id)
+                    ? Color.FromArgb(218, 242, 225)
+                    : result.Fouled || result.DidNotFinish
+                        ? Color.FromArgb(252, 230, 230)
+                        : SystemColors.Window;
+            }
         }
     }
 
@@ -562,6 +868,16 @@ public sealed class TournamentRunnerForm : Form
 
     private static string FormatResult(LiveLaneResult result)
     {
+        if (result.Fouled)
+        {
+            if (result.Winner)
+            {
+                return "Winner (least red light)";
+            }
+            return result.Place.HasValue
+                ? $"Place {result.Place} (red light)"
+                : "Red light";
+        }
         if (result.Winner)
         {
             if (result.BreakoutUs.HasValue)
@@ -577,10 +893,6 @@ public sealed class TournamentRunnerForm : Form
         if (result.Place.HasValue)
         {
             return $"Place {result.Place}";
-        }
-        if (result.Fouled)
-        {
-            return "Red light";
         }
         if (result.BreakoutUs.HasValue)
         {
@@ -601,6 +913,89 @@ public sealed class TournamentRunnerForm : Form
         return "";
     }
 
+    private RunResult[] BuildRunResults() => heat.Entries.Select(entry =>
+    {
+        var live = liveResults.GetValueOrDefault(entry.LaneNumber) ?? new LiveLaneResult();
+        var legality = live.Fouled ? RunLegality.RedLight :
+            live.BreakoutUs.HasValue ? RunLegality.Breakout :
+            live.Finished ? RunLegality.Legal : RunLegality.DidNotFinish;
+        return new RunResult(
+            entry.Car.Id,
+            legality,
+            live.FinishOrder == 0 ? int.MaxValue : live.FinishOrder,
+            live.ReactionUs,
+            live.BreakoutUs,
+            entry.IsBye);
+    }).ToArray();
+
+    private void ShowResultsSummary()
+    {
+        resultAdvancerIds.Clear();
+        resultAdvancerIds.UnionWith(planner.SelectAdvancers(heat, BuildRunResults())
+            .Select(result => result.CarId)
+            .ToHashSet());
+        var advancing = heat.Entries
+            .Where(entry => resultAdvancerIds.Contains(entry.Car.Id))
+            .Select(entry => entry.Car.DisplayName)
+            .ToArray();
+        var eliminated = heat.Entries
+            .Where(entry => !resultAdvancerIds.Contains(entry.Car.Id))
+            .Select(entry => entry.Car.DisplayName)
+            .ToArray();
+
+        resultsSummary.Text = $"Advancing: {string.Join(", ", advancing)}";
+        if (eliminated.Length > 0)
+        {
+            resultsSummary.Text += $"{Environment.NewLine}Eliminated: {string.Join(", ", eliminated)}";
+        }
+        resultsSummary.Visible = true;
+        confirmButton.Text = advancing.Length == 1
+            ? "Confirm 1 Advancer"
+            : $"Confirm {advancing.Length} Advancers";
+        confirmButton.Enabled = true;
+        UpdateStatusCells();
+    }
+
+    private void PrepareRerun()
+    {
+        if (MessageBox.Show(
+                this,
+                "Discard these unconfirmed results and prepare this heat to run again?",
+                "Re-run heat",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question,
+                MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+        {
+            return;
+        }
+
+        liveResults.Clear();
+        resultAdvancerIds.Clear();
+        foreach (var entry in heat.Entries)
+        {
+            liveResults[entry.LaneNumber] = new LiveLaneResult();
+        }
+        foreach (DataGridViewRow row in lanesGrid.Rows)
+        {
+            foreach (var columnName in new[] { "Reaction", "Elapsed", "Speed", "Result" })
+            {
+                row.Cells[columnName].Value = "";
+            }
+            row.Cells["Status"].Value = "Ready to re-run";
+            row.DefaultCellStyle.BackColor = SystemColors.Window;
+        }
+        resultsSummary.Visible = false;
+        confirmButton.Enabled = false;
+        AddTimeline("Unconfirmed results discarded. Heat is ready to arm again.");
+        SetPhase(RunnerPhase.ReadyToStage);
+    }
+
+    private void ShowHistory()
+    {
+        using var form = new TournamentHistoryForm(repository.GetTournamentReport(tournament.Id));
+        form.ShowDialog(this);
+    }
+
     private void ConfirmHeat()
     {
         if (confirmingHeat)
@@ -611,19 +1006,9 @@ public sealed class TournamentRunnerForm : Form
         confirmingHeat = true;
         confirmButton.Enabled = false;
         sendHeatButton.Enabled = false;
-        demoHeatButton.Enabled = false;
+        rerunButton.Enabled = false;
 
-        var results = heat.Entries.Select(entry =>
-        {
-            var live = liveResults.GetValueOrDefault(entry.LaneNumber) ?? new LiveLaneResult();
-            var legality = live.Fouled ? RunLegality.RedLight :
-                live.BreakoutUs.HasValue ? RunLegality.Breakout :
-                live.Finished ? RunLegality.Legal : RunLegality.DidNotFinish;
-            return new RunResult(
-                entry.Car.Id, legality,
-                live.FinishOrder == 0 ? int.MaxValue : live.FinishOrder,
-                live.ReactionUs, live.BreakoutUs, entry.IsBye);
-        }).ToArray();
+        var results = BuildRunResults();
         var advancers = planner.SelectAdvancers(heat, results);
         repository.SaveHeatResults(
             tournament.Id, round.RoundNumber, heat.HeatNumber,
@@ -632,6 +1017,7 @@ public sealed class TournamentRunnerForm : Form
         if (!repository.IsRoundConfirmed(tournament.Id, round.RoundNumber))
         {
             heatIndex++;
+            SetPhase(RunnerPhase.Confirmed);
             LoadHeat();
             confirmingHeat = false;
             UpdateHeatActionButtons();
@@ -651,6 +1037,12 @@ public sealed class TournamentRunnerForm : Form
         LoadCurrentRound();
         confirmingHeat = false;
         UpdateHeatActionButtons();
+    }
+
+    private void AddTimeline(string text)
+    {
+        timeline.Items.Add($"{DateTime.Now:HH:mm:ss}  {text}");
+        timeline.TopIndex = Math.Max(0, timeline.Items.Count - 1);
     }
 
     private void Append(string text) =>

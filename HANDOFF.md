@@ -70,6 +70,9 @@ GitHub at `https://github.com/tekrantz57/Drag`.
 ## Current Software Features
 
 - Firmware supports heads-up and bracket racing.
+- Firmware supports Full and Pro Tree timing, plus a configurable staged delay.
+- Controller-issued placements are authoritative for close finishes and
+  four-lane advancement; negative reaction times are reported before fouls.
 - Active lane count can be 2 or 4; 2-lane mode uses physical lanes 1 and 4.
 - `SET:HEAT_LANES` lets tournament/practice heats use selected physical lanes.
 - Serial protocol uses colon-delimited printable ASCII frames with XOR

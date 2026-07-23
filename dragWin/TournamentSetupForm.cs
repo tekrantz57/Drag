@@ -4,493 +4,393 @@ public sealed class TournamentSetupForm : Form
 {
     private readonly RaceRepository repository;
     private readonly TournamentPlanner planner = new();
-    private bool setupActionRunning;
-    private DateTimeOffset lastSetupButtonActionAt;
-    private readonly TextBox racerNameInput = new() { Width = 150 };
-    private readonly ComboBox racerSelector = new()
-    {
-        DropDownStyle = ComboBoxStyle.DropDownList,
-        Width = 170,
-        DisplayMember = nameof(Racer.Name)
-    };
-    private readonly TextBox carNameInput = new() { Width = 150 };
-    private readonly NumericUpDown dialInput = new()
-    {
-        DecimalPlaces = 3,
-        Increment = 0.001M,
-        Minimum = 0.100M,
-        Maximum = 60.000M,
-        Value = 10.000M,
-        Width = 80
-    };
     private readonly CheckedListBox carList = new()
     {
         Dock = DockStyle.Fill,
         CheckOnClick = true,
-        DisplayMember = nameof(Car.DisplayName)
+        DisplayMember = nameof(Car.DisplayName),
+        IntegralHeight = false
     };
     private readonly TextBox tournamentNameInput = new()
     {
         Text = $"Tournament {DateTime.Now:yyyy-MM-dd}",
-        Width = 210
+        Dock = DockStyle.Fill
     };
     private readonly ComboBox laneCountSelector = new()
     {
         DropDownStyle = ComboBoxStyle.DropDownList,
-        Width = 50
+        Width = 72
     };
-    private readonly TextBox roundPreview = new()
+    private readonly Label selectionSummary = new()
     {
-        Multiline = true,
-        ReadOnly = true,
-        ScrollBars = ScrollBars.Both,
-        WordWrap = false,
-        Dock = DockStyle.Fill,
-        Font = new Font(FontFamily.GenericMonospace, 9)
+        AutoSize = true,
+        Font = new Font(SystemFonts.DefaultFont, FontStyle.Bold),
+        ForeColor = Color.FromArgb(35, 91, 145)
     };
+    private readonly DataGridView roundPreview = new()
+    {
+        Dock = DockStyle.Fill,
+        ReadOnly = true,
+        AllowUserToAddRows = false,
+        AllowUserToDeleteRows = false,
+        AllowUserToResizeRows = false,
+        AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
+        BackgroundColor = SystemColors.Window,
+        BorderStyle = BorderStyle.Fixed3D,
+        RowHeadersVisible = false,
+        SelectionMode = DataGridViewSelectionMode.FullRowSelect
+    };
+    private readonly Label previewNotice = new()
+    {
+        AutoSize = true,
+        ForeColor = SystemColors.GrayText
+    };
+    private readonly Button createButton = new()
+    {
+        Text = "Create Tournament",
+        AutoSize = true,
+        BackColor = Color.FromArgb(35, 91, 145),
+        ForeColor = Color.White,
+        FlatStyle = FlatStyle.Flat,
+        Padding = new Padding(12, 4, 12, 4)
+    };
+    private RoundPlan? previewRound;
+    private bool setupActionRunning;
+    private bool suppressPreviewRefresh;
 
     public TournamentSetupForm(RaceRepository repository)
     {
         this.repository = repository;
-        Text = "Racers, Cars, and Tournament Setup";
-        MinimumSize = new Size(1100, 640);
-        Size = new Size(1100, 700);
+        Text = "Create Tournament";
+        MinimumSize = new Size(900, 600);
+        Size = new Size(1050, 700);
         StartPosition = FormStartPosition.CenterParent;
 
         laneCountSelector.Items.AddRange(["2", "4"]);
         laneCountSelector.SelectedItem = "4";
+        UiStyles.ConfigurePrimaryButton(createButton, UiStyles.BlueAction);
 
-        var addRacerButton = new Button { Text = "Add Racer", AutoSize = true, MinimumSize = new Size(90, 0) };
-        var addCarButton = new Button { Text = "Add Car", AutoSize = true, MinimumSize = new Size(80, 0) };
-        var updateCarButton = new Button { Text = "Update Car Default", AutoSize = true, MinimumSize = new Size(145, 0) };
-        var retireCarButton = new Button { Text = "Retire Car", AutoSize = true, MinimumSize = new Size(90, 0) };
-        var generateButton = new Button
+        roundPreview.Columns.Add(new DataGridViewTextBoxColumn
         {
-            Text = "Create Tournament and Round 1",
-            AutoSize = false,
-            Size = new Size(240, 28)
-        };
-        addRacerButton.Click += (_, _) => RunSetupButtonAction(addRacerButton, AddRacer);
-        addCarButton.Click += (_, _) => RunSetupButtonAction(addCarButton, AddCar);
-        updateCarButton.Click += (_, _) => RunSetupButtonAction(updateCarButton, UpdateSelectedCar);
-        retireCarButton.Click += (_, _) => RunSetupButtonAction(retireCarButton, RetireSelectedCar);
-        generateButton.Click += (_, _) => RunSetupButtonAction(generateButton, GenerateRound);
-        carList.SelectedIndexChanged += (_, _) => LoadSelectedCarIntoEditor();
+            Name = "Heat",
+            HeaderText = "Heat",
+            FillWeight = 35
+        });
+        roundPreview.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "Lane",
+            HeaderText = "Lane",
+            FillWeight = 35
+        });
+        roundPreview.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "Racer",
+            HeaderText = "Racer",
+            FillWeight = 90
+        });
+        roundPreview.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "Car",
+            HeaderText = "Car",
+            FillWeight = 90
+        });
+        roundPreview.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "Dial",
+            HeaderText = "Dial",
+            FillWeight = 45
+        });
+        roundPreview.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "Notes",
+            HeaderText = "Notes",
+            FillWeight = 90
+        });
 
-        var carsGroup = new GroupBox
+        var manageButton = new Button { Text = "Manage Racers && Cars", AutoSize = true };
+        var selectAllButton = new Button { Text = "Select All", AutoSize = true };
+        var clearButton = new Button { Text = "Clear", AutoSize = true };
+        manageButton.Click += (_, _) => ManageRacersAndCars();
+        selectAllButton.Click += (_, _) => SetAllCarsChecked(true);
+        clearButton.Click += (_, _) => SetAllCarsChecked(false);
+        createButton.Click += (_, _) => CreateTournament();
+        carList.ItemCheck += (_, _) =>
+        {
+            if (!suppressPreviewRefresh)
+            {
+                BeginInvoke(RefreshPreview);
+            }
+        };
+        laneCountSelector.SelectedIndexChanged += (_, _) => RefreshPreview();
+        tournamentNameInput.TextChanged += (_, _) => UpdateCreateButton();
+
+        var header = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
-            Text = "Available Cars",
-            Padding = new Padding(8)
+            AutoSize = true,
+            ColumnCount = 5,
+            Margin = new Padding(0, 0, 0, 10)
         };
-        carsGroup.Controls.Add(carList);
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        header.Controls.Add(new Label { Text = "Tournament name", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 0);
+        header.Controls.Add(tournamentNameInput, 1, 0);
+        header.Controls.Add(new Label { Text = "Lanes", AutoSize = true, Anchor = AnchorStyles.Left }, 2, 0);
+        header.Controls.Add(laneCountSelector, 3, 0);
+        header.Controls.Add(manageButton, 4, 0);
 
-        var previewGroup = new GroupBox
+        var entrantHeader = new FlowLayoutPanel
         {
             Dock = DockStyle.Fill,
-            Text = "Generated Round Preview",
-            Padding = new Padding(8)
+            AutoSize = true,
+            WrapContents = false,
+            Margin = new Padding(0, 0, 0, 4)
         };
-        previewGroup.Controls.Add(roundPreview);
+        entrantHeader.Controls.Add(new Label
+        {
+            Text = "Entrants",
+            AutoSize = true,
+            Font = new Font(SystemFonts.DefaultFont, FontStyle.Bold),
+            Margin = new Padding(0, 7, 12, 0)
+        });
+        entrantHeader.Controls.Add(selectAllButton);
+        entrantHeader.Controls.Add(clearButton);
+
+        var previewHeader = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            AutoSize = true,
+            ColumnCount = 2,
+            Margin = new Padding(0, 0, 0, 4)
+        };
+        previewHeader.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        previewHeader.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        previewHeader.Controls.Add(new Label
+        {
+            Text = "Round 1 Preview",
+            AutoSize = true,
+            Font = new Font(SystemFonts.DefaultFont, FontStyle.Bold),
+            Anchor = AnchorStyles.Left
+        }, 0, 0);
+        previewHeader.Controls.Add(selectionSummary, 1, 0);
+
+        var entrantPanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
+        entrantPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        entrantPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        entrantPanel.Controls.Add(entrantHeader, 0, 0);
+        entrantPanel.Controls.Add(carList, 0, 1);
+
+        var previewPanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3, ColumnCount = 1 };
+        previewPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        previewPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        previewPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        previewPanel.Controls.Add(previewHeader, 0, 0);
+        previewPanel.Controls.Add(roundPreview, 0, 1);
+        previewPanel.Controls.Add(previewNotice, 0, 2);
 
         var split = new SplitContainer
         {
             Dock = DockStyle.Fill,
-            Orientation = Orientation.Vertical,
-            SplitterDistance = 380
+            Orientation = Orientation.Vertical
         };
-        split.Panel1.Controls.Add(carsGroup);
-        split.Panel2.Controls.Add(previewGroup);
+        split.Panel1.Controls.Add(entrantPanel);
+        split.Panel2.Controls.Add(previewPanel);
+
+        var footer = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            AutoSize = true,
+            FlowDirection = FlowDirection.RightToLeft,
+            WrapContents = false,
+            Padding = new Padding(0, 8, 0, 0)
+        };
+        var cancelButton = new Button { Text = "Close", AutoSize = true };
+        cancelButton.Click += (_, _) => Close();
+        AcceptButton = createButton;
+        CancelButton = cancelButton;
+        footer.Controls.Add(createButton);
+        footer.Controls.Add(cancelButton);
 
         var layout = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
-            ColumnCount = 3,
+            ColumnCount = 1,
             RowCount = 3,
-            Padding = new Padding(8)
+            Padding = new Padding(12)
         };
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 270));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 340));
-        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-
-        layout.Controls.Add(CreateRacerGroup(addRacerButton), 0, 0);
-        layout.Controls.Add(CreateCarGroup(addCarButton, updateCarButton, retireCarButton), 1, 0);
-        layout.Controls.Add(CreateTournamentGroup(generateButton), 2, 0);
-        layout.Controls.Add(new Label
-        {
-            AutoSize = true,
-            Text = $"Database: {repository.DatabasePath}",
-            ForeColor = SystemColors.GrayText
-        }, 0, 1);
-        layout.SetColumnSpan(layout.GetControlFromPosition(0, 1)!, 3);
-        layout.Controls.Add(split, 0, 2);
-        layout.SetColumnSpan(split, 3);
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.Controls.Add(header, 0, 0);
+        layout.Controls.Add(split, 0, 1);
+        layout.Controls.Add(footer, 0, 2);
         Controls.Add(layout);
+        Shown += (_, _) => UiStyles.SetSplitterDistanceWhenSized(split, 330, 260, 440);
 
-        RefreshData();
+        RefreshCars();
     }
 
-    private static Padding LabelMargin => new(3, 8, 6, 3);
-    private static Padding ControlMargin => new(3, 3, 12, 3);
-
-    private Control CreateRacerGroup(Button addRacerButton)
+    private void ManageRacersAndCars()
     {
-        var group = new GroupBox
-        {
-            AutoSize = true,
-            Dock = DockStyle.Fill,
-            Text = "Racers",
-            Padding = new Padding(8)
-        };
-        var table = new TableLayoutPanel
-        {
-            AutoSize = true,
-            Dock = DockStyle.Top,
-            ColumnCount = 3,
-            RowCount = 1
-        };
-        table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        table.Controls.Add(new Label { AutoSize = true, Text = "Racer:", Margin = LabelMargin }, 0, 0);
-        racerNameInput.Dock = DockStyle.Fill;
-        racerNameInput.Margin = ControlMargin;
-        table.Controls.Add(racerNameInput, 1, 0);
-        table.Controls.Add(addRacerButton, 2, 0);
-        group.Controls.Add(table);
-        return group;
+        var checkedIds = CheckedCarIds();
+        using var form = new RacerCarManagerForm(repository);
+        form.ShowDialog(this);
+        RefreshCars(checkedIds);
     }
 
-    private Control CreateCarGroup(
-        Button addCarButton,
-        Button updateCarButton,
-        Button retireCarButton)
+    private void SetAllCarsChecked(bool isChecked)
     {
-        var group = new GroupBox
+        suppressPreviewRefresh = true;
+        try
         {
-            AutoSize = true,
-            Dock = DockStyle.Fill,
-            Text = "Cars",
-            Padding = new Padding(8)
-        };
-        var table = new TableLayoutPanel
-        {
-            AutoSize = true,
-            Dock = DockStyle.Top,
-            ColumnCount = 6,
-            RowCount = 2
-        };
-        table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 175));
-        table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 160));
-        table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
-        table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-
-        table.Controls.Add(new Label { AutoSize = true, Text = "Racer:", Margin = LabelMargin }, 0, 0);
-        racerSelector.Dock = DockStyle.Fill;
-        racerSelector.Margin = ControlMargin;
-        table.Controls.Add(racerSelector, 1, 0);
-        table.Controls.Add(new Label { AutoSize = true, Text = "Car:", Margin = LabelMargin }, 2, 0);
-        carNameInput.Dock = DockStyle.Fill;
-        carNameInput.Margin = ControlMargin;
-        table.Controls.Add(carNameInput, 3, 0);
-        table.Controls.Add(new Label { AutoSize = true, Text = "Default dial:", Margin = LabelMargin }, 4, 0);
-        dialInput.Dock = DockStyle.Fill;
-        dialInput.Margin = new Padding(3, 3, 3, 3);
-        table.Controls.Add(dialInput, 5, 0);
-
-        var buttonPanel = new FlowLayoutPanel
-        {
-            AutoSize = true,
-            Dock = DockStyle.Fill,
-            WrapContents = false,
-            Margin = new Padding(0)
-        };
-        buttonPanel.Controls.AddRange([addCarButton, updateCarButton, retireCarButton]);
-        table.Controls.Add(buttonPanel, 1, 1);
-        table.SetColumnSpan(buttonPanel, 5);
-
-        group.Controls.Add(table);
-        return group;
-    }
-
-    private Control CreateTournamentGroup(Button generateButton)
-    {
-        var group = new GroupBox
-        {
-            AutoSize = false,
-            Dock = DockStyle.Fill,
-            Text = "Tournament",
-            Padding = new Padding(8),
-            MinimumSize = new Size(330, 140)
-        };
-        var table = new TableLayoutPanel
-        {
-            AutoSize = true,
-            Dock = DockStyle.Top,
-            ColumnCount = 2,
-            RowCount = 3
-        };
-        table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 250));
-        table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-
-        table.Controls.Add(new Label { AutoSize = true, Text = "Name:", Margin = LabelMargin }, 0, 0);
-        tournamentNameInput.Dock = DockStyle.None;
-        tournamentNameInput.Margin = ControlMargin;
-        tournamentNameInput.Width = 230;
-        table.Controls.Add(tournamentNameInput, 1, 0);
-        table.Controls.Add(new Label { AutoSize = true, Text = "Lanes:", Margin = LabelMargin }, 0, 1);
-        laneCountSelector.Width = 70;
-        laneCountSelector.Margin = ControlMargin;
-        table.Controls.Add(laneCountSelector, 1, 1);
-        generateButton.Margin = ControlMargin;
-        table.Controls.Add(generateButton, 1, 2);
-
-        group.Controls.Add(table);
-        return group;
-    }
-
-    private void AddRacer()
-    {
-        RunDatabaseAction(() =>
-        {
-            var racer = repository.AddRacer(racerNameInput.Text);
-            racerNameInput.Clear();
-            RefreshData();
-            racerSelector.SelectedItem = racerSelector.Items
-                .Cast<Racer>().Single(item => item.Id == racer.Id);
-        });
-    }
-
-    private void AddCar()
-    {
-        if (racerSelector.SelectedItem is not Racer racer)
-        {
-            MessageBox.Show(this, "Add or select a racer first.", Text);
-            return;
+            for (var index = 0; index < carList.Items.Count; index++)
+            {
+                carList.SetItemChecked(index, isChecked);
+            }
         }
-
-        RunDatabaseAction(() =>
+        finally
         {
-            repository.AddCar(
-                racer.Id,
-                carNameInput.Text,
-                decimal.ToInt32(dialInput.Value * 1000M));
-            carNameInput.Clear();
-            RefreshData();
-            racerSelector.SelectedItem = racerSelector.Items
-                .Cast<Racer>().Single(item => item.Id == racer.Id);
-        });
+            suppressPreviewRefresh = false;
+        }
+        BeginInvoke(RefreshPreview);
     }
 
-    private void UpdateSelectedCar()
+    private void RefreshCars(IReadOnlySet<long>? checkedIds = null)
     {
-        if (carList.SelectedItem is not Car car)
+        suppressPreviewRefresh = true;
+        try
         {
-            MessageBox.Show(this, "Select a car to update.", Text);
-            return;
+            carList.Items.Clear();
+            foreach (var car in repository.GetCars())
+            {
+                var index = carList.Items.Add(car);
+                if (checkedIds?.Contains(car.Id) == true)
+                {
+                    carList.SetItemChecked(index, true);
+                }
+            }
         }
-        if (racerSelector.SelectedItem is not Racer racer)
+        finally
         {
-            MessageBox.Show(this, "Select the car racer.", Text);
-            return;
+            suppressPreviewRefresh = false;
         }
-
-        var checkedCarIds = carList.CheckedItems.Cast<Car>()
-            .Select(item => item.Id)
-            .ToHashSet();
-        RunDatabaseAction(() =>
-        {
-            var updatedCar = repository.UpdateCar(
-                car.Id,
-                racer.Id,
-                carNameInput.Text,
-                decimal.ToInt32(dialInput.Value * 1000M));
-            RefreshData(checkedCarIds);
-            carList.SelectedItem = carList.Items
-                .Cast<Car>()
-                .Single(item => item.Id == updatedCar.Id);
-        });
+        RefreshPreview();
     }
 
-    private void RetireSelectedCar()
-    {
-        if (carList.SelectedItem is not Car car)
-        {
-            MessageBox.Show(this, "Select a car to retire.", Text);
-            return;
-        }
+    private HashSet<long> CheckedCarIds() => carList.CheckedItems
+        .Cast<Car>()
+        .Select(car => car.Id)
+        .ToHashSet();
 
-        var result = MessageBox.Show(
-            this,
-            $"Retire {car.DisplayName}?\n\nIt will be hidden from future tournament setup, but existing tournament history will be kept.",
-            Text,
-            MessageBoxButtons.YesNo,
-            MessageBoxIcon.Question,
-            MessageBoxDefaultButton.Button2);
-        if (result != DialogResult.Yes)
-        {
-            return;
-        }
-
-        var checkedCarIds = carList.CheckedItems.Cast<Car>()
-            .Where(item => item.Id != car.Id)
-            .Select(item => item.Id)
-            .ToHashSet();
-        RunDatabaseAction(() =>
-        {
-            repository.RetireCar(car.Id);
-            carNameInput.Clear();
-            RefreshData(checkedCarIds);
-        });
-    }
-
-    private void LoadSelectedCarIntoEditor()
-    {
-        if (carList.SelectedItem is not Car car)
-        {
-            return;
-        }
-
-        racerSelector.SelectedItem = racerSelector.Items
-            .Cast<Racer>()
-            .FirstOrDefault(item => item.Id == car.RacerId);
-        carNameInput.Text = car.Name;
-        dialInput.Value = Math.Clamp(
-            car.DefaultDialMilliseconds / 1000M,
-            dialInput.Minimum,
-            dialInput.Maximum);
-    }
-
-    private void GenerateRound()
+    private void RefreshPreview()
     {
         var selectedCars = carList.CheckedItems.Cast<Car>().ToArray();
+        roundPreview.Rows.Clear();
+        previewRound = null;
+
         if (selectedCars.Length == 0)
         {
-            MessageBox.Show(this, "Select at least one car.", Text);
+            selectionSummary.Text = "No entrants selected";
+            previewNotice.Text = "Select cars to preview the opening round.";
+            UpdateCreateButton();
             return;
         }
 
         var laneCount = int.Parse((string)laneCountSelector.SelectedItem!);
-        RunDatabaseAction(() =>
+        previewRound = planner.CreateRound(selectedCars, laneCount, 1);
+        var duplicateWarnings = 0;
+        foreach (var heat in previewRound.Heats)
         {
-            var tournament = repository.CreateTournament(
-                tournamentNameInput.Text,
-                laneCount,
-                selectedCars.Select(car => car.Id).ToArray());
-            var round = planner.CreateRound(selectedCars, laneCount, 1);
-            repository.SaveRound(tournament.Id, round);
-            ShowRound(round);
-        });
-    }
-
-    private void ShowRound(RoundPlan round)
-    {
-        var lines = new List<string>
-        {
-            $"ROUND {round.RoundNumber}    RANDOM SEED {round.RandomSeed}",
-            string.Empty
-        };
-
-        foreach (var heat in round.Heats)
-        {
-            lines.Add($"HEAT {heat.HeatNumber} — {heat.AdvanceCount} advance");
-            foreach (var entry in heat.Entries.OrderBy(entry => entry.LaneNumber))
-            {
-                lines.Add(
-                    $"  Lane {entry.LaneNumber}: {entry.Car.DisplayName}" +
-                    (entry.IsBye ? "  [BYE PASS — ADVANCES]" : string.Empty));
-            }
-
-            var duplicateRacers = heat.Entries
+            var duplicateRacerIds = heat.Entries
                 .GroupBy(entry => entry.Car.RacerId)
                 .Where(group => group.Count() > 1)
-                .Select(group => group.First().Car.RacerName)
-                .ToArray();
-            if (duplicateRacers.Length > 0)
-            {
-                lines.Add($"  WARNING: same racer — {string.Join(", ", duplicateRacers)}");
-            }
-            lines.Add(string.Empty);
-        }
+                .Select(group => group.Key)
+                .ToHashSet();
 
-        roundPreview.Lines = lines.ToArray();
-    }
-
-    private void RefreshData(IReadOnlySet<long>? checkedCarIds = null)
-    {
-        var selectedRacerId = (racerSelector.SelectedItem as Racer)?.Id;
-        var selectedCarId = (carList.SelectedItem as Car)?.Id;
-        racerSelector.DataSource = repository.GetRacers().ToList();
-        if (selectedRacerId.HasValue)
-        {
-            racerSelector.SelectedItem = racerSelector.Items
-                .Cast<Racer>().FirstOrDefault(item => item.Id == selectedRacerId);
-        }
-
-        carList.Items.Clear();
-        foreach (var car in repository.GetCars())
-        {
-            var index = carList.Items.Add(car);
-            if (checkedCarIds?.Contains(car.Id) == true)
+            foreach (var entry in heat.Entries.OrderBy(entry => entry.LaneNumber))
             {
-                carList.SetItemChecked(index, true);
-            }
-            if (selectedCarId == car.Id)
-            {
-                carList.SelectedIndex = index;
+                var notes = entry.IsBye ? "BYE - advances" : string.Empty;
+                if (duplicateRacerIds.Contains(entry.Car.RacerId))
+                {
+                    notes = notes.Length == 0 ? "Same racer in heat" : $"{notes}; same racer in heat";
+                    duplicateWarnings++;
+                }
+                var rowIndex = roundPreview.Rows.Add(
+                    heat.HeatNumber,
+                    entry.LaneNumber,
+                    entry.Car.RacerName,
+                    entry.Car.Name,
+                    (entry.DialMilliseconds / 1000M).ToString("0.000"),
+                    notes);
+                if (entry.IsBye)
+                {
+                    roundPreview.Rows[rowIndex].DefaultCellStyle.BackColor = Color.FromArgb(232, 243, 252);
+                }
+                else if (duplicateRacerIds.Contains(entry.Car.RacerId))
+                {
+                    roundPreview.Rows[rowIndex].DefaultCellStyle.BackColor = Color.FromArgb(255, 244, 214);
+                }
             }
         }
+
+        selectionSummary.Text =
+            $"{selectedCars.Length} entrant{(selectedCars.Length == 1 ? "" : "s")}  |  " +
+            $"{previewRound.Heats.Count} heat{(previewRound.Heats.Count == 1 ? "" : "s")}";
+        previewNotice.Text = duplicateWarnings == 0
+            ? $"Random seed {previewRound.RandomSeed}. Lane assignments are saved when the tournament is created."
+            : "Amber rows indicate cars belonging to the same racer could not be separated.";
+        previewNotice.ForeColor = duplicateWarnings == 0
+            ? SystemColors.GrayText
+            : Color.FromArgb(145, 91, 0);
+        UpdateCreateButton();
     }
 
-    private void RunDatabaseAction(Action action)
+    private void UpdateCreateButton()
     {
-        try
-        {
-            action();
-        }
-        catch (Exception exception)
-        {
-            MessageBox.Show(this, exception.Message, "Operation failed");
-        }
+        createButton.Enabled =
+            !setupActionRunning &&
+            previewRound is not null &&
+            !string.IsNullOrWhiteSpace(tournamentNameInput.Text);
     }
 
-    private void RunSetupButtonAction(Button button, Action action)
+    private void CreateTournament()
     {
-        var now = DateTimeOffset.Now;
-        if (now - lastSetupButtonActionAt < TimeSpan.FromMilliseconds(700))
-        {
-            return;
-        }
-        if (setupActionRunning)
+        if (setupActionRunning || previewRound is null)
         {
             return;
         }
 
         setupActionRunning = true;
-        lastSetupButtonActionAt = now;
-        var wasEnabled = button.Enabled;
-        button.Enabled = false;
+        UpdateCreateButton();
         try
         {
-            action();
+            var selectedCars = carList.CheckedItems.Cast<Car>().ToArray();
+            var laneCount = int.Parse((string)laneCountSelector.SelectedItem!);
+            var tournament = repository.CreateTournament(
+                tournamentNameInput.Text,
+                laneCount,
+                selectedCars.Select(car => car.Id).ToArray());
+            repository.SaveRound(tournament.Id, previewRound);
+            MessageBox.Show(
+                this,
+                $"{tournament.Name} was created with {selectedCars.Length} entrants.",
+                "Tournament created",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+            DialogResult = DialogResult.OK;
+            Close();
+        }
+        catch (Exception exception)
+        {
+            MessageBox.Show(this, exception.Message, "Tournament could not be created");
         }
         finally
         {
             setupActionRunning = false;
-            if (!IsDisposed)
-            {
-                button.Enabled = wasEnabled;
-            }
+            UpdateCreateButton();
         }
     }
 }

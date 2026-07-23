@@ -17,6 +17,17 @@ Assert(
     "A distance command should round-trip.");
 AssertEqual("660000", distancesMessage!.Parts[2]);
 AssertEqual("12000", distancesMessage.Parts[3]);
+var treeCommand = ProtocolMessage.Create("SET", "TREE", "PRO").Encode();
+Assert(
+    ProtocolMessage.TryParse(treeCommand, out var treeMessage, out _),
+    "A Tree-mode command should round-trip.");
+AssertEqual("PRO", treeMessage!.Parts[2]);
+var stagedDelayCommand = ProtocolMessage.Create(
+    "SET", "STAGED_DELAY", "750").Encode();
+Assert(
+    ProtocolMessage.TryParse(stagedDelayCommand, out var stagedDelayMessage, out _),
+    "A staged-delay command should round-trip.");
+AssertEqual("750", stagedDelayMessage!.Parts[2]);
 var eventWithMetadata = ProtocolMessage.Create(
     "EVENT", "LANE", "1", "GREEN", "SEQ", "42", "MS", "123456").Encode();
 Assert(
@@ -88,13 +99,24 @@ var competitiveHeat = new HeatPlan(
 var advancers = planner.SelectAdvancers(
     competitiveHeat,
     [
-        new RunResult(1, RunLegality.Breakout, 1, 10000, 5000, false),
-        new RunResult(2, RunLegality.Legal, 3, 20000, null, false),
+        new RunResult(1, RunLegality.Breakout, 3, 10000, 5000, false),
+        new RunResult(2, RunLegality.Legal, 1, 20000, null, false),
         new RunResult(3, RunLegality.Breakout, 2, 15000, 2000, false),
         new RunResult(4, RunLegality.RedLight, 4, -1000, null, false)
     ]);
 AssertEqual(2L, advancers[0].CarId);
 AssertEqual(3L, advancers[1].CarId);
+
+var legacyAdvancers = planner.SelectAdvancers(
+    competitiveHeat,
+    [
+        new RunResult(1, RunLegality.Breakout, int.MaxValue, 10000, 5000, false),
+        new RunResult(2, RunLegality.Legal, int.MaxValue, 20000, null, false),
+        new RunResult(3, RunLegality.Breakout, int.MaxValue, 15000, 2000, false),
+        new RunResult(4, RunLegality.RedLight, int.MaxValue, -1000, null, false)
+    ]);
+AssertEqual(2L, legacyAdvancers[0].CarId);
+AssertEqual(3L, legacyAdvancers[1].CarId);
 
 var byeHeat = new HeatPlan(
     1,
@@ -111,6 +133,9 @@ Assert(
 Assert(
     demoMessages.Any(item => item.Type == "RESULT" && item.Parts[1] == "WINNER"),
     "A demo heat should report a winner when at least one car makes a legal or breakout pass.");
+AssertEqual(
+    competitiveHeat.Entries.Count,
+    demoMessages.Count(item => item.Type == "RESULT" && item.Parts[1] == "PLACE"));
 Assert(
     demoMessages.Any(item => item.Type == "RESULT" && item.Parts.Count > 3 && item.Parts[3] == "SPEED_MPH_X100"),
     "A demo heat should include speed-trap output.");
@@ -121,6 +146,29 @@ Assert(
 Assert(
     demoByeMessages.All(item => !(item.Type == "EVENT" && item.Parts.Count > 3 && item.Parts[3] == "FOUL")),
     "A demo BYE pass should not red-light.");
+
+IReadOnlyList<ProtocolMessage>? demoWithFoul = null;
+for (var seed = 0; seed < 1000 && demoWithFoul is null; seed++)
+{
+    var candidate = DemoHeatSimulator.CreateBracketHeatMessages(competitiveHeat, seed);
+    if (candidate.Any(item =>
+            item.Type == "EVENT" && item.Parts.Count > 3 && item.Parts[3] == "FOUL"))
+    {
+        demoWithFoul = candidate;
+    }
+}
+Assert(demoWithFoul is not null, "The demo search should find a deterministic foul.");
+var foulMessages = demoWithFoul!;
+var foulIndex = foulMessages.ToList().FindIndex(item =>
+    item.Type == "EVENT" && item.Parts.Count > 3 && item.Parts[3] == "FOUL");
+Assert(foulIndex >= 0, "The selected demo should contain a foul event.");
+var foulLane = foulMessages[foulIndex].Parts[2];
+Assert(
+    foulMessages.Take(foulIndex).Any(item =>
+        item.Type == "EVENT" && item.Parts.Count > 4 &&
+        item.Parts[2] == foulLane && item.Parts[3] == "REACTION_US" &&
+        long.TryParse(item.Parts[4], out var reaction) && reaction < 0),
+    "A foul should be preceded by that lane's negative reaction time.");
 
 var laneChoiceEntries = cars.Take(4)
     .Select((car, index) => new RoundEntry(

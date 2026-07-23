@@ -40,6 +40,17 @@ Sensor status fields use logical blocked state, not raw voltage. With the
 current active-HIGH LM393 sensors, `1` means the beam is blocked and `0` means
 the beam is clear.
 
+## Tree modes
+
+- `FULL`: amber 1, amber 2, amber 3, and green are separated by 500 ms.
+- `PRO`: all three ambers illuminate together, followed by green after 400 ms.
+
+The staged delay is independent of Tree cadence. It controls the wait from all
+participating lanes being fully staged to the first amber and accepts `0`
+through `5000` milliseconds. The default is `500` ms. If any participating car
+leaves the stage beam during this delay, the start is aborted and staging
+begins again without assigning a red light.
+
 ## Windows-to-controller commands
 
 - `PING`
@@ -52,10 +63,13 @@ the beam is clear.
 - `SET:DISTANCES:<track-inches-x1000>:<trap-inches-x1000>`
 - `SET:MODE:HEADS_UP`
 - `SET:MODE:BRACKET`
+- `SET:TREE:FULL`
+- `SET:TREE:PRO`
+- `SET:STAGED_DELAY:<0-5000-milliseconds>`
 - `SET:DIAL:<lane>:<milliseconds>`
 
-Mode and dial changes are accepted only while waiting for staging or waiting
-for the track to clear.
+Race, Tree, lane, distance, staged-delay, and dial changes are accepted only
+outside staging and an active race.
 
 ## Controller-to-Windows messages
 
@@ -68,12 +82,17 @@ for the track to clear.
 - `ACK:SET:HEAT_LANES:<comma-separated-physical-lanes>`
 - `ACK:SET:DISTANCES:<track-inches-x1000>:<trap-inches-x1000>`
 - `ACK:SET:MODE:<mode>`
+- `ACK:SET:TREE:<FULL|PRO>`
+- `ACK:SET:STAGED_DELAY:<milliseconds>`
 - `ACK:SET:DIAL:<lane>:<milliseconds>`
 - `STATUS:TREE:<state>:MODE:<mode>:LANES:<2|4>:HEAT_LANES:<list>:TRACK_IN_X1000:<value>:TRAP_IN_X1000:<value>`
+- `STATUS:SETTINGS:TREE:<FULL|PRO>:STAGED_DELAY_MS:<milliseconds>`
 - `STATUS:LANE:<lane>:DIAL_MS:<milliseconds>:PRESTAGE:<0|1>:STAGE:<0|1>:SPEED_TRAP:<0|1>:FINISH:<0|1>:FOUL:<0|1>:FINISHED:<0|1>`
 - `SENSOR:<lane>:<name>:RAW:<0|1>:EDGES:<count>:PULSE_US:<microseconds|NONE>`
 - `EVENT:TREE:<state>`
+- `EVENT:TREE:STAGING_ABORTED`
 - `EVENT:LANE:<lane>:AMBER_<1|2|3>`
+- `EVENT:LANE:<lane>:PRO_AMBERS`
 - `EVENT:LANE:<lane>:GREEN`
 - `EVENT:LANE:<lane>:FOUL`
 - `EVENT:LANE:<lane>:REACTION_US:<microseconds>`
@@ -107,3 +126,10 @@ race debounce is applied. `EDGES` counts clear-to-blocked transitions.
 `NONE` if no pulse has completed since startup or the last diagnostic reset.
 Counters saturate rather than wrapping and can be cleared without resetting
 the race controller.
+
+`REACTION_US` is sent for both legal and foul starts; a negative value is the
+amount by which the lane left before green. It precedes the lane's `FOUL`
+event. At race completion, the controller sends authoritative `PLACE` messages.
+In bracket mode, legal finishers rank first by stripe crossing, breakouts rank
+next by least breakout, and red lights rank next by smallest negative-reaction
+magnitude. DNFs are not assigned a place.

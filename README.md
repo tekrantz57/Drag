@@ -16,6 +16,8 @@ The repository has two main parts:
 - Serial: USB serial at 115200 baud.
 - Lanes: 4 physical lanes, with optional 2-lane mode using lanes 1 and 4.
 - Sensors: 4 beam sensors per lane: pre-stage, stage, speed trap, and finish.
+- Tree: selectable 500 ms Full Tree or 400 ms Pro Tree, with an independently
+  configurable staged-to-first-amber delay.
 - Sensor polarity: LM393 slot sensors are active-HIGH on this track. A blocked
   beam reads `HIGH`; a clear beam reads `LOW`.
 - Wiring assumption: each sensor signal uses an Ethernet twisted pair with its

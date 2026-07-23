@@ -28,18 +28,16 @@ public static class DemoHeatSimulator
 
         foreach (var result in laneResults.OrderBy(result => result.LaunchOffsetUs))
         {
-            if (result.Fouled)
-            {
-                messages.Add(ProtocolMessage.Create("EVENT", "LANE", result.Entry.LaneNumber.ToString(), "FOUL"));
-                continue;
-            }
-
             messages.Add(ProtocolMessage.Create(
                 "EVENT",
                 "LANE",
                 result.Entry.LaneNumber.ToString(),
                 "REACTION_US",
                 result.ReactionUs.ToString()));
+            if (result.Fouled)
+            {
+                messages.Add(ProtocolMessage.Create("EVENT", "LANE", result.Entry.LaneNumber.ToString(), "FOUL"));
+            }
         }
 
         foreach (var result in laneResults
@@ -72,10 +70,7 @@ public static class DemoHeatSimulator
                 result.SpeedMphX100.ToString()));
         }
 
-        var winner = SelectBracketWinner(laneResults);
-        messages.Add(winner is null
-            ? ProtocolMessage.Create("RESULT", "NO_WINNER")
-            : ProtocolMessage.Create("RESULT", "WINNER", "LANE", winner.Entry.LaneNumber.ToString()));
+        AddBracketPlacements(messages, laneResults);
         messages.Add(ProtocolMessage.Create("EVENT", "TREE", "RACE_COMPLETE"));
         return messages;
     }
@@ -126,18 +121,16 @@ public static class DemoHeatSimulator
 
         foreach (var result in laneResults.OrderBy(result => result.LaunchOffsetUs))
         {
-            if (result.Fouled)
-            {
-                messages.Add(ProtocolMessage.Create("EVENT", "LANE", result.Entry.LaneNumber.ToString(), "FOUL"));
-                continue;
-            }
-
             messages.Add(ProtocolMessage.Create(
                 "EVENT",
                 "LANE",
                 result.Entry.LaneNumber.ToString(),
                 "REACTION_US",
                 result.ReactionUs.ToString()));
+            if (result.Fouled)
+            {
+                messages.Add(ProtocolMessage.Create("EVENT", "LANE", result.Entry.LaneNumber.ToString(), "FOUL"));
+            }
         }
 
         var finishers = laneResults
@@ -174,10 +167,7 @@ public static class DemoHeatSimulator
 
         if (bracketMode)
         {
-            var winner = SelectBracketWinner(laneResults);
-            messages.Add(winner is null
-                ? ProtocolMessage.Create("RESULT", "NO_WINNER")
-                : ProtocolMessage.Create("RESULT", "WINNER", "LANE", winner.Entry.LaneNumber.ToString()));
+            AddBracketPlacements(messages, laneResults);
         }
         else
         {
@@ -244,21 +234,30 @@ public static class DemoHeatSimulator
             finishOffsetUs);
     }
 
-    private static DemoLaneResult? SelectBracketWinner(IReadOnlyList<DemoLaneResult> results)
+    private static void AddBracketPlacements(
+        ICollection<ProtocolMessage> messages,
+        IReadOnlyList<DemoLaneResult> results)
     {
-        var legalWinner = results
-            .Where(result => !result.Fouled && !result.BreakoutUs.HasValue)
-            .OrderBy(result => result.FinishOffsetUs)
-            .FirstOrDefault();
-        if (legalWinner is not null)
+        var ordered = results
+            .OrderBy(result => result.Fouled ? 2 : result.BreakoutUs.HasValue ? 1 : 0)
+            .ThenBy(result => result.Fouled
+                ? Math.Abs(result.ReactionUs)
+                : result.BreakoutUs ?? result.FinishOffsetUs)
+            .ThenBy(result => result.FinishOffsetUs)
+            .ToArray();
+        for (var index = 0; index < ordered.Length; index++)
         {
-            return legalWinner;
+            messages.Add(ProtocolMessage.Create(
+                "RESULT",
+                "PLACE",
+                (index + 1).ToString(),
+                "LANE",
+                ordered[index].Entry.LaneNumber.ToString()));
         }
-
-        return results
-            .Where(result => !result.Fouled && result.BreakoutUs.HasValue)
-            .OrderBy(result => result.BreakoutUs)
-            .FirstOrDefault();
+        messages.Add(ordered.Length == 0
+            ? ProtocolMessage.Create("RESULT", "NO_WINNER")
+            : ProtocolMessage.Create(
+                "RESULT", "WINNER", "LANE", ordered[0].Entry.LaneNumber.ToString()));
     }
 
     private sealed record DemoLaneResult(

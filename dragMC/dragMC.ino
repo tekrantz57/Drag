@@ -7,8 +7,8 @@ constexpr uint8_t MAX_LANE_COUNT = 4;
 constexpr uint8_t LIGHTS_PER_LANE = 7;
 constexpr uint8_t SENSORS_PER_LANE = 4;
 constexpr char FIRMWARE_NAME[] = "DRAG_MC";
-constexpr char FIRMWARE_VERSION[] = "0.3.0";
-constexpr uint8_t PROTOCOL_VERSION = 2;
+constexpr char FIRMWARE_VERSION[] = "0.4.0";
+constexpr uint8_t PROTOCOL_VERSION = 3;
 
 enum LightIndex : uint8_t {
   PreStageLight,
@@ -53,8 +53,10 @@ constexpr unsigned long MIN_SPEED_TRAP_LENGTH_IN_X1000 = 100;
 // beam is blocked and LOW when it is clear.
 constexpr bool SENSOR_IS_ACTIVE_LOW = false;
 constexpr unsigned long SENSOR_DEBOUNCE_MS = 2;
-constexpr unsigned long STAGING_HOLD_MS = 500;
-constexpr unsigned long AMBER_INTERVAL_MS = 500;
+constexpr unsigned long DEFAULT_STAGED_DELAY_MS = 500;
+constexpr unsigned long MAX_STAGED_DELAY_MS = 5000;
+constexpr unsigned long FULL_TREE_INTERVAL_MS = 500;
+constexpr unsigned long PRO_TREE_INTERVAL_MS = 400;
 constexpr unsigned long RESULT_HOLD_MS = 3000;
 constexpr unsigned long TRACK_CLEAR_HOLD_MS = 1000;
 constexpr unsigned long MAX_RACE_TIME_MS = 30000;
@@ -67,6 +69,7 @@ constexpr uint8_t MAX_SERIAL_INPUT_BYTES_PER_LOOP = 32;
 constexpr unsigned long HEARTBEAT_INTERVAL_MS = 1000;
 
 enum class RaceMode : uint8_t { HeadsUp, Bracket };
+enum class TreeMode : uint8_t { Full, Pro };
 enum class TreeState : uint8_t {
   WaitingForAllLanes,
   StagingHold,
@@ -76,6 +79,7 @@ enum class TreeState : uint8_t {
 };
 enum class LaneTreeStep : uint8_t {
   Waiting,
+  ProAmbers,
   Amber1,
   Amber2,
   Amber3,
@@ -173,7 +177,9 @@ struct LaneRace {
   bool crossedSpeedTrap = false;
   bool finished = false;
   bool elapsedAvailable = false;
+  bool reactionAvailable = false;
   LaneTreeStep treeStep = LaneTreeStep::Waiting;
+  int32_t reactionUs = 0;
   unsigned long greenAtUs = 0;
   unsigned long launchedAtUs = 0;
   unsigned long speedTrapAtUs = 0;
@@ -190,6 +196,8 @@ unsigned long speedTrapLengthInX1000 =
     DEFAULT_SPEED_TRAP_LENGTH_IN_X1000;
 
 RaceMode raceMode = RaceMode::HeadsUp;
+TreeMode treeMode = TreeMode::Full;
+unsigned long stagedDelayMs = DEFAULT_STAGED_DELAY_MS;
 uint8_t activeLaneCount = MAX_LANE_COUNT;
 uint8_t heatLaneMask = 0x0F;
 TreeState treeState = TreeState::WaitingForAllLanes;
@@ -367,6 +375,16 @@ const char* raceModeName() {
   return raceMode == RaceMode::HeadsUp ? "HEADS_UP" : "BRACKET";
 }
 
+const char* treeModeName() {
+  return treeMode == TreeMode::Full ? "FULL" : "PRO";
+}
+
+unsigned long treeGreenDelayMs() {
+  return treeMode == TreeMode::Full
+             ? 3UL * FULL_TREE_INTERVAL_MS
+             : PRO_TREE_INTERVAL_MS;
+}
+
 bool laneIsActive(const uint8_t lane) {
   return activeLaneCount == 4 || lane == 0 || lane == 3;
 }
@@ -526,6 +544,12 @@ void setLaneTreeStep(const uint8_t lane, const LaneTreeStep step) {
   switch (step) {
     case LaneTreeStep::Waiting:
       return;
+    case LaneTreeStep::ProAmbers:
+      setLaneLight(lane, AmberLight1, true);
+      setLaneLight(lane, AmberLight2, true);
+      setLaneLight(lane, AmberLight3, true);
+      strcpy(event, "PRO_AMBERS");
+      break;
     case LaneTreeStep::Amber1:
       setLaneLight(lane, AmberLight1, true);
       strcpy(event, "AMBER_1");
@@ -542,7 +566,7 @@ void setLaneTreeStep(const uint8_t lane, const LaneTreeStep step) {
       setLaneLight(lane, GreenLight, true);
       result.greenAtUs =
           raceEpochUs +
-          (laneDelayMs(lane) + 3UL * AMBER_INTERVAL_MS) * 1000UL;
+          (laneDelayMs(lane) + treeGreenDelayMs()) * 1000UL;
       strcpy(event, "GREEN");
       break;
   }
@@ -556,11 +580,20 @@ void updateLaneTree(const uint8_t lane, const unsigned long nowMs) {
   const unsigned long startMs = laneDelayMs(lane);
 
   if (elapsedMs < startMs) return;
-  if (elapsedMs < startMs + AMBER_INTERVAL_MS) {
+  if (treeMode == TreeMode::Pro) {
+    if (elapsedMs < startMs + PRO_TREE_INTERVAL_MS) {
+      setLaneTreeStep(lane, LaneTreeStep::ProAmbers);
+    } else {
+      setLaneTreeStep(lane, LaneTreeStep::Green);
+    }
+    return;
+  }
+
+  if (elapsedMs < startMs + FULL_TREE_INTERVAL_MS) {
     setLaneTreeStep(lane, LaneTreeStep::Amber1);
-  } else if (elapsedMs < startMs + 2UL * AMBER_INTERVAL_MS) {
+  } else if (elapsedMs < startMs + 2UL * FULL_TREE_INTERVAL_MS) {
     setLaneTreeStep(lane, LaneTreeStep::Amber2);
-  } else if (elapsedMs < startMs + 3UL * AMBER_INTERVAL_MS) {
+  } else if (elapsedMs < startMs + 3UL * FULL_TREE_INTERVAL_MS) {
     setLaneTreeStep(lane, LaneTreeStep::Amber3);
   } else {
     setLaneTreeStep(lane, LaneTreeStep::Green);
@@ -635,23 +668,26 @@ void updateLaneRace(const uint8_t lane) {
     const unsigned long launchUs = stage.unblockedAtUs();
     const unsigned long scheduledGreenUs =
         raceEpochUs +
-        (laneDelayMs(lane) + 3UL * AMBER_INTERVAL_MS) * 1000UL;
+        (laneDelayMs(lane) + treeGreenDelayMs()) * 1000UL;
     const int32_t reactionUs =
         static_cast<int32_t>(launchUs - scheduledGreenUs);
+
+    result.greenAtUs = scheduledGreenUs;
+    result.reactionUs = reactionUs;
+    result.reactionAvailable = true;
+    char message[48];
+    snprintf(
+        message, sizeof(message), "EVENT:LANE:%u:REACTION_US:%ld",
+        lane + 1, static_cast<long>(reactionUs));
+    sendProtocolMessage(message);
 
     if (reactionUs < 0) {
       foulLane(lane);
       return;
     }
 
-    result.greenAtUs = scheduledGreenUs;
     result.launchedAtUs = launchUs;
     result.launched = true;
-    char message[48];
-    snprintf(
-        message, sizeof(message), "EVENT:LANE:%u:REACTION_US:%ld",
-        lane + 1, static_cast<long>(reactionUs));
-    sendProtocolMessage(message);
   }
 
   DebouncedBeamSensor& trap = sensors[lane][SpeedTrapSensor];
@@ -670,7 +706,71 @@ void updateLaneRace(const uint8_t lane) {
   }
 }
 
-void reportWinner() {
+enum class BracketResultClass : uint8_t {
+  Legal,
+  Breakout,
+  RedLight,
+  DidNotFinish
+};
+
+BracketResultClass bracketResultClass(const uint8_t lane) {
+  const LaneRace& result = lanes[lane];
+  if (result.fouled) return BracketResultClass::RedLight;
+  if (!result.finished || !result.elapsedAvailable) {
+    return BracketResultClass::DidNotFinish;
+  }
+  return result.elapsedUs < dialMs[lane] * 1000UL
+             ? BracketResultClass::Breakout
+             : BracketResultClass::Legal;
+}
+
+unsigned long redLightMagnitudeUs(const LaneRace& result) {
+  if (!result.reactionAvailable || result.reactionUs >= 0) return ULONG_MAX;
+  return static_cast<unsigned long>(
+      -static_cast<int64_t>(result.reactionUs));
+}
+
+bool bracketLaneRanksAhead(const uint8_t candidate, const uint8_t current) {
+  const BracketResultClass candidateClass = bracketResultClass(candidate);
+  const BracketResultClass currentClass = bracketResultClass(current);
+  if (candidateClass != currentClass) {
+    return static_cast<uint8_t>(candidateClass) <
+           static_cast<uint8_t>(currentClass);
+  }
+
+  const LaneRace& candidateResult = lanes[candidate];
+  const LaneRace& currentResult = lanes[current];
+  switch (candidateClass) {
+    case BracketResultClass::Legal:
+      return candidateResult.finishedAtUs - raceEpochUs <
+             currentResult.finishedAtUs - raceEpochUs;
+    case BracketResultClass::Breakout: {
+      const unsigned long candidateBreakout =
+          dialMs[candidate] * 1000UL - candidateResult.elapsedUs;
+      const unsigned long currentBreakout =
+          dialMs[current] * 1000UL - currentResult.elapsedUs;
+      if (candidateBreakout != currentBreakout) {
+        return candidateBreakout < currentBreakout;
+      }
+      return candidateResult.finishedAtUs - raceEpochUs <
+             currentResult.finishedAtUs - raceEpochUs;
+    }
+    case BracketResultClass::RedLight: {
+      const unsigned long candidateMagnitude =
+          redLightMagnitudeUs(candidateResult);
+      const unsigned long currentMagnitude = redLightMagnitudeUs(currentResult);
+      if (candidateMagnitude != currentMagnitude) {
+        return candidateMagnitude < currentMagnitude;
+      }
+      return candidate < current;
+    }
+    case BracketResultClass::DidNotFinish:
+      return candidate < current;
+  }
+  return false;
+}
+
+void reportPlacements() {
   char message[40];
 
   if (raceMode == RaceMode::HeadsUp) {
@@ -699,37 +799,27 @@ void reportWinner() {
     return;
   }
 
+  bool used[MAX_LANE_COUNT] = {};
+  uint8_t place = 1;
   int8_t winner = -1;
-  unsigned long bestValue = 0;
-  bool legalFinisherExists = false;
-
-  for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
-    if (!laneParticipates(lane)) continue;
-    if (lanes[lane].fouled || !lanes[lane].finished ||
-        !lanes[lane].elapsedAvailable) continue;
-    const bool breakout = lanes[lane].elapsedUs < dialMs[lane] * 1000UL;
-    if (breakout) continue;
-    const unsigned long finishOffset = lanes[lane].finishedAtUs - raceEpochUs;
-    if (!legalFinisherExists || finishOffset < bestValue) {
-      winner = lane;
-      bestValue = finishOffset;
-      legalFinisherExists = true;
-    }
-  }
-
-  if (!legalFinisherExists) {
+  while (true) {
+    int8_t bestLane = -1;
     for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
-      if (!laneParticipates(lane)) continue;
-      if (lanes[lane].fouled || !lanes[lane].finished ||
-          !lanes[lane].elapsedAvailable) continue;
-      const unsigned long dialUs = dialMs[lane] * 1000UL;
-      if (lanes[lane].elapsedUs >= dialUs) continue;
-      const unsigned long breakoutUs = dialUs - lanes[lane].elapsedUs;
-      if (winner < 0 || breakoutUs < bestValue) {
-        winner = lane;
-        bestValue = breakoutUs;
+      if (!laneParticipates(lane) || used[lane] ||
+          bracketResultClass(lane) == BracketResultClass::DidNotFinish) {
+        continue;
+      }
+      if (bestLane < 0 || bracketLaneRanksAhead(lane, bestLane)) {
+        bestLane = lane;
       }
     }
+    if (bestLane < 0) break;
+    used[bestLane] = true;
+    if (winner < 0) winner = bestLane;
+    snprintf(
+        message, sizeof(message), "RESULT:PLACE:%u:LANE:%u",
+        place++, bestLane + 1);
+    sendProtocolMessage(message);
   }
 
   if (winner < 0) {
@@ -754,6 +844,12 @@ void sendStatus() {
       heatLanes,
       trackLengthInX1000,
       speedTrapLengthInX1000);
+  sendProtocolMessage(message);
+
+  snprintf(
+      message, sizeof(message),
+      "STATUS:SETTINGS:TREE:%s:STAGED_DELAY_MS:%lu",
+      treeModeName(), stagedDelayMs);
   sendProtocolMessage(message);
 
   for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
@@ -850,6 +946,38 @@ void processSetCommand(char* line) {
     }
     char message[32];
     snprintf(message, sizeof(message), "ACK:SET:MODE:%s", raceModeName());
+    sendProtocolMessage(message);
+    return;
+  }
+
+  if (strcmp(setting, "TREE") == 0 && value2 == nullptr) {
+    if (strcmp(value1, "FULL") == 0) {
+      treeMode = TreeMode::Full;
+    } else if (strcmp(value1, "PRO") == 0) {
+      treeMode = TreeMode::Pro;
+    } else {
+      sendProtocolMessage("ERROR:VALUE:TREE");
+      return;
+    }
+    char message[32];
+    snprintf(message, sizeof(message), "ACK:SET:TREE:%s", treeModeName());
+    sendProtocolMessage(message);
+    return;
+  }
+
+  if (strcmp(setting, "STAGED_DELAY") == 0 && value2 == nullptr) {
+    char* endPointer = nullptr;
+    const unsigned long requestedDelay = strtoul(value1, &endPointer, 10);
+    if (value1[0] == '\0' || endPointer == nullptr || *endPointer != '\0' ||
+        requestedDelay > MAX_STAGED_DELAY_MS) {
+      sendProtocolMessage("ERROR:VALUE:STAGED_DELAY");
+      return;
+    }
+    stagedDelayMs = requestedDelay;
+    char message[40];
+    snprintf(
+        message, sizeof(message), "ACK:SET:STAGED_DELAY:%lu",
+        stagedDelayMs);
     sendProtocolMessage(message);
     return;
   }
@@ -1031,20 +1159,16 @@ void updateSerialCommands() {
 }
 
 void updateTree(const unsigned long nowMs) {
-  if (treeState == TreeState::StagingHold) {
-    for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
-      if (!laneParticipates(lane)) continue;
-      if (!sensors[lane][StageSensor].isBlocked()) foulLane(lane);
-    }
-  }
-
   switch (treeState) {
     case TreeState::WaitingForAllLanes:
       if (allLanesAreStaged()) enterState(TreeState::StagingHold, nowMs);
       break;
 
     case TreeState::StagingHold:
-      if (nowMs - stateStartedAtMs >= STAGING_HOLD_MS) {
+      if (!allLanesAreStaged()) {
+        sendProtocolMessage("EVENT:TREE:STAGING_ABORTED");
+        enterState(TreeState::WaitingForAllLanes, nowMs);
+      } else if (nowMs - stateStartedAtMs >= stagedDelayMs) {
         enterState(TreeState::RaceActive, nowMs);
       }
       break;
@@ -1058,9 +1182,9 @@ void updateTree(const unsigned long nowMs) {
 
       const unsigned long latestGreenDelay =
           latestLaneDelayMs() +
-          3UL * AMBER_INTERVAL_MS;
+          treeGreenDelayMs();
       if (allLanesHaveResults()) {
-        reportWinner();
+        reportPlacements();
         enterState(TreeState::ShowingResults, nowMs);
       } else if (nowMs - raceEpochMs >=
                  latestGreenDelay + MAX_RACE_TIME_MS) {
@@ -1073,7 +1197,7 @@ void updateTree(const unsigned long nowMs) {
             sendProtocolMessage(message);
           }
         }
-        reportWinner();
+        reportPlacements();
         enterState(TreeState::ShowingResults, nowMs);
       }
       break;
