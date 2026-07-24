@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 
 namespace DragWin;
 
@@ -8,6 +9,8 @@ public sealed class MainForm : Form
 
     private readonly DragSerialClient client = new();
     private readonly RaceRepository raceRepository = new();
+    private PassResultsForm? passResultsForm;
+    private Form? controllerActivityForm;
     private bool connectionRequested;
     private bool controllerReady;
     private bool mainActionRunning;
@@ -19,7 +22,7 @@ public sealed class MainForm : Form
     private readonly ToolStripMenuItem statusMenuItem = new("Request controller status") { Enabled = false };
     private readonly ToolStripMenuItem resetMenuItem = new("Reset controller") { Enabled = false };
     private readonly ToolStripMenuItem testSensorsMenuItem = new("Sensor test...") { Enabled = false };
-    private readonly ToolStripMenuItem protocolLogMenuItem = new("Protocol log...");
+    private readonly ToolStripMenuItem protocolLogMenuItem = new("Controller activity...");
     private readonly ToolStripMenuItem demoPracticeMenuItem = new("Generate demo practice run");
     private readonly ComboBox portSelector = new()
     {
@@ -143,26 +146,15 @@ public sealed class MainForm : Form
     {
         Interval = 1000
     };
-    private readonly TextBox logTextBox = new()
-    {
-        Multiline = true,
-        ReadOnly = true,
-        ScrollBars = ScrollBars.Vertical,
-        Dock = DockStyle.Fill,
-        Font = new Font(FontFamily.GenericMonospace, 9)
-    };
-    private readonly ListBox activityList = new()
-    {
-        Dock = DockStyle.Fill,
-        IntegralHeight = false,
-        BorderStyle = BorderStyle.FixedSingle
-    };
+    private readonly StringBuilder protocolLogBuffer = new();
+    private readonly List<string> activityEntries = [];
+    private int diagnosticsVersion;
 
     public MainForm()
     {
         Text = "Drag Strip Controller";
-        MinimumSize = new Size(900, 620);
-        Size = new Size(1100, 720);
+        MinimumSize = new Size(900, 430);
+        Size = new Size(1100, 500);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = SystemColors.Window;
 
@@ -186,14 +178,12 @@ public sealed class MainForm : Form
         var title = CreateTitleBar();
         var connectionControls = CreateConnectionControls();
         var operations = CreateOperationsPanel();
-        var activity = CreateActivityPanel();
         var layout = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
-            RowCount = 5
+            RowCount = 4
         };
-        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -202,7 +192,6 @@ public sealed class MainForm : Form
         layout.Controls.Add(title, 0, 1);
         layout.Controls.Add(connectionControls, 0, 2);
         layout.Controls.Add(operations, 0, 3);
-        layout.Controls.Add(activity, 0, 4);
         Controls.Add(layout);
         MainMenuStrip = menuStrip;
 
@@ -220,7 +209,7 @@ public sealed class MainForm : Form
         statusMenuItem.Click += (_, _) => SendCommand("STATUS");
         resetMenuItem.Click += (_, _) => ResetController();
         testSensorsMenuItem.Click += (_, _) => ShowSensorTest();
-        protocolLogMenuItem.Click += (_, _) => ShowProtocolLog();
+        protocolLogMenuItem.Click += (_, _) => ShowControllerActivity();
         demoPracticeMenuItem.Click += (_, _) => DemoPracticeRun();
         modeSelector.SelectedIndexChanged += (_, _) =>
         {
@@ -438,37 +427,6 @@ public sealed class MainForm : Form
         ForeColor = color,
         Margin = new Padding(0)
     };
-
-    private Control CreateActivityPanel()
-    {
-        var clearButton = new Button { Text = "Clear", AutoSize = true, MinimumSize = new Size(70, 28) };
-        clearButton.Click += (_, _) => activityList.Items.Clear();
-        var header = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            AutoSize = true,
-            ColumnCount = 2,
-            Padding = new Padding(16, 8, 16, 5)
-        };
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        header.Controls.Add(new Label
-        {
-            Text = "Controller Activity",
-            AutoSize = true,
-            Font = new Font(SystemFonts.DefaultFont, FontStyle.Bold),
-            Anchor = AnchorStyles.Left
-        }, 0, 0);
-        header.Controls.Add(clearButton, 1, 0);
-
-        activityList.Margin = new Padding(16, 0, 16, 16);
-        var panel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
-        panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        panel.Controls.Add(header, 0, 0);
-        panel.Controls.Add(activityList, 0, 1);
-        return panel;
-    }
 
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
@@ -748,6 +706,7 @@ public sealed class MainForm : Form
         }
         SendCommand("SET", "HEAT_LANES", string.Join(',', selectedLanes));
         SendCommand("RESET");
+        BeginPracticePassResults(selectedLanes);
         AppendLog($"Practice setup sent for lane(s): {string.Join(", ", selectedLanes)}.");
     }
 
@@ -771,6 +730,8 @@ public sealed class MainForm : Form
         var messages = DemoHeatSimulator.CreatePracticeMessages(
             laneDialMilliseconds,
             bracketMode).ToArray();
+        var resultsForm = BeginPracticePassResults(selectedLanes);
+        resultsForm.ProcessMessages(messages);
 
         AppendLog($"DEMO: Practice run started for lane(s): {string.Join(", ", selectedLanes)}.");
         foreach (var message in messages)
@@ -779,6 +740,23 @@ public sealed class MainForm : Form
         }
 
         AppendPracticeSummary(messages);
+    }
+
+    private PassResultsForm BeginPracticePassResults(IReadOnlyCollection<int> lanes)
+    {
+        if (passResultsForm is null || passResultsForm.IsDisposed)
+        {
+            passResultsForm = new PassResultsForm(client);
+            passResultsForm.FormClosed += (_, _) => passResultsForm = null;
+            passResultsForm.Show(this);
+        }
+        else
+        {
+            passResultsForm.BringToFront();
+        }
+
+        passResultsForm.BeginPass(lanes);
+        return passResultsForm;
     }
 
     private void AppendPracticeSummary(IReadOnlyList<ProtocolMessage> messages)
@@ -1042,25 +1020,59 @@ public sealed class MainForm : Form
         form.ShowDialog(this);
     }
 
-    private void ShowProtocolLog()
+    private void ShowControllerActivity()
     {
-        using var dialog = new Form
+        if (controllerActivityForm is { IsDisposed: false })
         {
-            Text = "Controller Protocol Log",
+            controllerActivityForm.BringToFront();
+            return;
+        }
+
+        var dialog = new Form
+        {
+            Text = "Controller Diagnostics",
             StartPosition = FormStartPosition.CenterParent,
             MinimumSize = new Size(760, 480),
             Size = new Size(900, 620)
         };
-        var viewer = new TextBox
+        controllerActivityForm = dialog;
+        var activityViewer = new ListBox
+        {
+            Dock = DockStyle.Fill,
+            IntegralHeight = false,
+            BorderStyle = BorderStyle.FixedSingle
+        };
+        var protocolViewer = new TextBox
         {
             Dock = DockStyle.Fill,
             Multiline = true,
             ReadOnly = true,
             ScrollBars = ScrollBars.Both,
             WordWrap = false,
-            Font = new Font(FontFamily.GenericMonospace, 9),
-            Text = logTextBox.Text
+            Font = new Font(FontFamily.GenericMonospace, 9)
         };
+        var tabs = new TabControl { Dock = DockStyle.Fill };
+        var activityTab = new TabPage("Activity");
+        var protocolTab = new TabPage("Protocol");
+        activityTab.Controls.Add(activityViewer);
+        protocolTab.Controls.Add(protocolViewer);
+        tabs.TabPages.AddRange([activityTab, protocolTab]);
+
+        var clearButton = new Button { Text = "Clear Current", AutoSize = true, MinimumSize = new Size(100, 30) };
+        var closeButton = new Button { Text = "Close", AutoSize = true, MinimumSize = new Size(80, 30) };
+        clearButton.Click += (_, _) =>
+        {
+            if (tabs.SelectedTab == activityTab)
+            {
+                activityEntries.Clear();
+            }
+            else
+            {
+                protocolLogBuffer.Clear();
+            }
+            diagnosticsVersion++;
+        };
+        closeButton.Click += (_, _) => dialog.Close();
         var pathLabel = new Label
         {
             Text = client.LogPath,
@@ -1069,19 +1081,20 @@ public sealed class MainForm : Form
             ForeColor = SystemColors.GrayText,
             TextAlign = ContentAlignment.MiddleLeft
         };
-        var closeButton = new Button { Text = "Close", AutoSize = true, MinimumSize = new Size(80, 30) };
-        closeButton.Click += (_, _) => dialog.Close();
         var footer = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
             AutoSize = true,
-            ColumnCount = 2,
+            ColumnCount = 3,
             Padding = new Padding(0, 8, 0, 0)
         };
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         footer.Controls.Add(pathLabel, 0, 0);
-        footer.Controls.Add(closeButton, 1, 0);
+        footer.Controls.Add(clearButton, 1, 0);
+        footer.Controls.Add(closeButton, 2, 0);
+
         var layout = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
@@ -1091,28 +1104,49 @@ public sealed class MainForm : Form
         };
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        layout.Controls.Add(viewer, 0, 0);
+        layout.Controls.Add(tabs, 0, 0);
         layout.Controls.Add(footer, 0, 1);
         dialog.Controls.Add(layout);
         dialog.CancelButton = closeButton;
 
-        using var refreshTimer = new System.Windows.Forms.Timer { Interval = 500 };
-        refreshTimer.Tick += (_, _) =>
+        var displayedVersion = -1;
+        void RefreshViewers()
         {
-            if (viewer.Text == logTextBox.Text)
+            if (displayedVersion == diagnosticsVersion)
             {
                 return;
             }
-            var atEnd = viewer.SelectionStart >= viewer.TextLength - 1;
-            viewer.Text = logTextBox.Text;
-            if (atEnd)
+
+            activityViewer.BeginUpdate();
+            activityViewer.Items.Clear();
+            activityViewer.Items.AddRange(activityEntries.Cast<object>().ToArray());
+            activityViewer.EndUpdate();
+            if (activityViewer.Items.Count > 0)
             {
-                viewer.SelectionStart = viewer.TextLength;
-                viewer.ScrollToCaret();
+                activityViewer.TopIndex = activityViewer.Items.Count - 1;
             }
+
+            var atProtocolEnd = protocolViewer.SelectionStart >= protocolViewer.TextLength - 1;
+            protocolViewer.Text = protocolLogBuffer.ToString();
+            if (atProtocolEnd)
+            {
+                protocolViewer.SelectionStart = protocolViewer.TextLength;
+                protocolViewer.ScrollToCaret();
+            }
+            displayedVersion = diagnosticsVersion;
+        }
+
+        var refreshTimer = new System.Windows.Forms.Timer { Interval = 500 };
+        refreshTimer.Tick += (_, _) => RefreshViewers();
+        dialog.FormClosed += (_, _) =>
+        {
+            refreshTimer.Stop();
+            refreshTimer.Dispose();
+            controllerActivityForm = null;
         };
+        RefreshViewers();
         refreshTimer.Start();
-        dialog.ShowDialog(this);
+        dialog.Show(this);
     }
 
     private void SetConnectedState(bool connected)
@@ -1337,7 +1371,8 @@ public sealed class MainForm : Form
 
     private void AppendLog(string text)
     {
-        logTextBox.AppendText($"{DateTime.Now:HH:mm:ss.fff} {text}{Environment.NewLine}");
+        protocolLogBuffer.AppendLine($"{DateTime.Now:HH:mm:ss.fff} {text}");
+        diagnosticsVersion++;
         if (text.StartsWith("< ", StringComparison.Ordinal) ||
             text.StartsWith("> ", StringComparison.Ordinal) ||
             text.StartsWith("DEMO < ", StringComparison.Ordinal))
@@ -1345,12 +1380,11 @@ public sealed class MainForm : Form
             return;
         }
 
-        activityList.Items.Add($"{DateTime.Now:HH:mm:ss}  {text}");
-        while (activityList.Items.Count > 200)
+        activityEntries.Add($"{DateTime.Now:HH:mm:ss}  {text}");
+        while (activityEntries.Count > 200)
         {
-            activityList.Items.RemoveAt(0);
+            activityEntries.RemoveAt(0);
         }
-        activityList.TopIndex = Math.Max(0, activityList.Items.Count - 1);
     }
 
     private void PostToUi(Action action)
