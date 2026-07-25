@@ -88,8 +88,8 @@ behavior.
 ## Sensor Pin Map
 
 Each lane currently has four sensors: pre-stage, stage, speed trap, and finish.
-Track testing has started with lane 1 pre-stage and stage wired/tested on A0
-and A1. A2 and A3 are the next expected lane 1 sensors to add/test.
+Lane 1 has been fully wired and tested on A0 through A3. Sensor Test validated
+all four inputs, and cardboard beam interruptions produced complete passes.
 
 The Windows `Test Sensors` window displays a raw blocked-edge count and the
 most recently completed raw blocked-pulse width for each input. These values
@@ -103,6 +103,20 @@ the pulse width shows whether it was long enough to pass the current debounce.
 | 2 | A4 | A5 | A6 | A7 |
 | 3 | A8 | A9 | A10 | A11 |
 | 4 | A12 | A13 | A14 | A15 |
+
+## Track Mounting and Guide-flag Clearance
+
+The track deck is 3/4 inch thick. With the current sensor mounting, the
+infrared optical path is too far below the underside of the track for a normal
+car guide flag to reach and interrupt it. This is a physical mounting-height
+issue; the four lane 1 sensors and the complete timing workflow have already
+been validated with cardboard beam interruptions.
+
+Raise the optical path into the guide flag's reach by routing shallow pockets
+for the sensor assemblies, fitting emitters and detectors with longer leads,
+or combining both methods. Preserve clearance so the guide cannot strike the
+components. Insulate and strain-relieve extended leads, then secure the final
+alignment against vibration before collecting moving-car pulse widths.
 
 ## Tree Light Pin Map
 

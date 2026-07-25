@@ -2,8 +2,14 @@
 
 ## Track sensor validation
 
-- Run moving-car tests on lane 1 A2 and A3 and record the raw pulse widths
-  reported by the Sensor Test window at representative speeds.
+- Raise the lane 1 optical paths so normal car guide flags can interrupt them
+  despite the 3/4-inch track deck. Evaluate shallow routed mounting pockets,
+  longer emitter/detector leads, or both, while retaining guide clearance and
+  rigid alignment.
+- After the mounting-height correction, run moving-car tests on lane 1 A0-A3
+  and record the raw pulse widths reported by Sensor Test at representative
+  speeds. Cardboard interruptions have already validated all four sensors and
+  produced complete passes.
 - Revisit the current 2 ms debounce only after pulse-width measurements are
   available. A pulse shorter than 2 ms is recorded by diagnostics but is not
   accepted as a race sensor transition.
@@ -24,8 +30,10 @@
 - Decide whether to enable a staging timeout after one or more lanes stage.
   The current controller waits indefinitely until every participating lane is
   staged, then uses the operator-configured staged delay.
-- Decide whether deep staging is allowed. The current start requires both the
-  pre-stage and stage sensors to remain blocked through the staged delay.
+- Decide whether actual venue racing will always use the default
+  `BOTH_BLOCKED` staging mode. The optional `IN_ORDER` mode latches pre-stage
+  for manual testing, while the stage beam must still remain blocked through
+  the staged delay.
 - Confirm whether a bye car must stage and take the Tree cleanly. The current
   tournament model guarantees its advancement even after a red light or DNF.
 - Decide how a four-lane heat should fill a second advancing position when

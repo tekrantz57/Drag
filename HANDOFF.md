@@ -61,9 +61,18 @@ GitHub at `https://github.com/tekrantz57/Drag`.
 
 - Track wiring/testing has started with real LM393 sensors installed at the
   track.
-- A0 and A1 have been tested at the track for lane 1 pre-stage and stage.
-- A2 and A3 are the next expected lane 1 sensors to add/test for speed trap
-  and finish.
+- On July 25, 2026, lane 1 was fully wired with A0 pre-stage, A1 stage, A2
+  speed trap, and A3 finish. All four inputs were validated in Sensor Test,
+  and several complete end-to-end passes were recorded by moving cardboard
+  through the beams.
+- A car could not yet be used for the pass tests because the track deck is
+  3/4 inch thick and the car's guide flag does not extend far enough below the
+  track to reach the current optical beam height. The planned correction is
+  to route shallow mounting pockets, use longer emitter/detector leads to
+  raise the optical path, or combine both approaches.
+- The cardboard passes validate the lane 1 wiring, sensors, controller, serial
+  protocol, and Windows pass workflow. Moving-car pulse-width validation is
+  still pending until the optical path is raised into the guide flag's reach.
 - The venue will probably add two intermediate/split sensors to each lane,
   increasing the likely future model from 4 sensors per lane to 6.
 
