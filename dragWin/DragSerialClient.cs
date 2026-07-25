@@ -117,6 +117,41 @@ public sealed class DragSerialClient : IDisposable
         }
     }
 
+    public void SendBatch(IEnumerable<string[]> commands)
+    {
+        ArgumentNullException.ThrowIfNull(commands);
+        var lines = commands
+            .Select(parts => ProtocolMessage.Create(parts).Encode())
+            .ToArray();
+        if (lines.Length == 0)
+        {
+            return;
+        }
+
+        lock (syncRoot)
+        {
+            if (serialPort?.IsOpen != true)
+            {
+                throw new InvalidOperationException("The serial port is not connected.");
+            }
+
+            try
+            {
+                serialPort.Write(string.Join(serialPort.NewLine, lines) + serialPort.NewLine);
+                foreach (var line in lines)
+                {
+                    log.Info($"TX {line}");
+                }
+            }
+            catch (Exception exception) when (
+                exception is IOException or InvalidOperationException or TimeoutException)
+            {
+                log.Error(exception, "serial batch write failed");
+                throw;
+            }
+        }
+    }
+
     private void SerialPortOnDataReceived(object sender, SerialDataReceivedEventArgs e)
     {
         var port = (SerialPort)sender;

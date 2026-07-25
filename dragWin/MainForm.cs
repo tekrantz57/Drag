@@ -6,6 +6,8 @@ namespace DragWin;
 public sealed class MainForm : Form
 {
     private const int LaneCount = 4;
+    private const int MaximumProtocolLogCharacters = 150_000;
+    private const int TrimmedProtocolLogCharacters = 120_000;
 
     private readonly DragSerialClient client = new();
     private readonly RaceRepository raceRepository = new();
@@ -652,6 +654,13 @@ public sealed class MainForm : Form
 
     private bool ApplyRaceSettings()
     {
+        return TryBuildRaceSettingsCommands(out var commands) &&
+               SendCommandBatch(commands);
+    }
+
+    private bool TryBuildRaceSettingsCommands(out List<string[]> commands)
+    {
+        commands = [];
         if (modeSelector.SelectedItem is not string mode ||
             treeModeSelector.SelectedItem is not string treeMode)
         {
@@ -668,22 +677,20 @@ public sealed class MainForm : Form
         }
 
         var laneCount = SelectedLaneCount();
-        SendCommand("SET", "LANES", laneCount.ToString(CultureInfo.InvariantCulture));
-        SendCommand("SET", "MODE", mode);
-        SendCommand("SET", "TREE", treeMode);
-        SendCommand(
+        commands.Add(["SET", "LANES", laneCount.ToString(CultureInfo.InvariantCulture)]);
+        commands.Add(["SET", "MODE", mode]);
+        commands.Add(["SET", "TREE", treeMode]);
+        commands.Add([
             "SET", "STAGING_MODE",
-            stagingModeSelector.SelectedItem as string ?? "BOTH_BLOCKED");
-        SendCommand(
-            "SET",
-            "STAGED_DELAY",
+            stagingModeSelector.SelectedItem as string ?? "BOTH_BLOCKED"]);
+        commands.Add([
+            "SET", "STAGED_DELAY",
             decimal.ToInt32(stagedDelayInput.Value * 1000M)
-                .ToString(CultureInfo.InvariantCulture));
-        SendCommand(
-            "SET",
-            "DISTANCES",
+                .ToString(CultureInfo.InvariantCulture)]);
+        commands.Add([
+            "SET", "DISTANCES",
             ToThousandthsOfAnInch(trackLengthInput.Value),
-            ToThousandthsOfAnInch(speedTrapLengthInput.Value));
+            ToThousandthsOfAnInch(speedTrapLengthInput.Value)]);
         for (var lane = 0; lane < LaneCount; lane++)
         {
             if (!LaneIsActive(lane, laneCount))
@@ -692,11 +699,10 @@ public sealed class MainForm : Form
             }
 
             var dialMilliseconds = decimal.ToInt32(dialInputs[lane].Value * 1000M);
-            SendCommand(
-                "SET",
-                "DIAL",
+            commands.Add([
+                "SET", "DIAL",
                 (lane + 1).ToString(CultureInfo.InvariantCulture),
-                dialMilliseconds.ToString(CultureInfo.InvariantCulture));
+                dialMilliseconds.ToString(CultureInfo.InvariantCulture)]);
         }
         return true;
     }
@@ -717,13 +723,17 @@ public sealed class MainForm : Form
             return;
         }
 
-        if (!ApplyRaceSettings())
+        if (!TryBuildRaceSettingsCommands(out var commands))
+        {
+            return;
+        }
+        commands.Add(["SET", "HEAT_LANES", string.Join(',', selectedLanes)]);
+        commands.Add(["RESET"]);
+        if (!SendCommandBatch(commands))
         {
             return;
         }
         SaveCurrentSettings();
-        SendCommand("SET", "HEAT_LANES", string.Join(',', selectedLanes));
-        SendCommand("RESET");
         BeginPracticePassResults(selectedLanes);
         AppendLog($"Practice setup sent for lane(s): {string.Join(", ", selectedLanes)}.");
     }
@@ -1138,21 +1148,32 @@ public sealed class MainForm : Form
         dialog.Controls.Add(layout);
         dialog.CancelButton = closeButton;
 
-        var displayedVersion = -1;
+        var displayedActivityVersion = -1;
+        var displayedProtocolVersion = -1;
         void RefreshViewers()
         {
-            if (displayedVersion == diagnosticsVersion)
+            if (tabs.SelectedTab == activityTab)
             {
+                if (displayedActivityVersion == diagnosticsVersion)
+                {
+                    return;
+                }
+
+                activityViewer.BeginUpdate();
+                activityViewer.Items.Clear();
+                activityViewer.Items.AddRange(activityEntries.Cast<object>().ToArray());
+                activityViewer.EndUpdate();
+                if (activityViewer.Items.Count > 0)
+                {
+                    activityViewer.TopIndex = activityViewer.Items.Count - 1;
+                }
+                displayedActivityVersion = diagnosticsVersion;
                 return;
             }
 
-            activityViewer.BeginUpdate();
-            activityViewer.Items.Clear();
-            activityViewer.Items.AddRange(activityEntries.Cast<object>().ToArray());
-            activityViewer.EndUpdate();
-            if (activityViewer.Items.Count > 0)
+            if (displayedProtocolVersion == diagnosticsVersion)
             {
-                activityViewer.TopIndex = activityViewer.Items.Count - 1;
+                return;
             }
 
             var atProtocolEnd = protocolViewer.SelectionStart >= protocolViewer.TextLength - 1;
@@ -1162,11 +1183,12 @@ public sealed class MainForm : Form
                 protocolViewer.SelectionStart = protocolViewer.TextLength;
                 protocolViewer.ScrollToCaret();
             }
-            displayedVersion = diagnosticsVersion;
+            displayedProtocolVersion = diagnosticsVersion;
         }
 
         var refreshTimer = new System.Windows.Forms.Timer { Interval = 500 };
         refreshTimer.Tick += (_, _) => RefreshViewers();
+        tabs.SelectedIndexChanged += (_, _) => RefreshViewers();
         dialog.FormClosed += (_, _) =>
         {
             refreshTimer.Stop();
@@ -1245,6 +1267,25 @@ public sealed class MainForm : Form
         {
             savedSettingsAppliedToController = true;
             AppendLog("Saved race and track settings applied to controller.");
+        }
+    }
+
+    private bool SendCommandBatch(IEnumerable<string[]> commands)
+    {
+        var commandList = commands.ToArray();
+        try
+        {
+            client.SendBatch(commandList);
+            foreach (var parts in commandList)
+            {
+                AppendLog($"> {ProtocolMessage.Create(parts).Encode()}");
+            }
+            return true;
+        }
+        catch (Exception exception)
+        {
+            AppendLog($"! {exception.Message}");
+            return false;
         }
     }
 
@@ -1494,6 +1535,7 @@ public sealed class MainForm : Form
     private void AppendLog(string text)
     {
         protocolLogBuffer.AppendLine($"{DateTime.Now:HH:mm:ss.fff} {text}");
+        TrimProtocolLog();
         diagnosticsVersion++;
         if (text.StartsWith("< ", StringComparison.Ordinal) ||
             text.StartsWith("> ", StringComparison.Ordinal) ||
@@ -1507,6 +1549,26 @@ public sealed class MainForm : Form
         {
             activityEntries.RemoveAt(0);
         }
+    }
+
+    private void TrimProtocolLog()
+    {
+        if (protocolLogBuffer.Length <= MaximumProtocolLogCharacters)
+        {
+            return;
+        }
+
+        var removeThrough = protocolLogBuffer.Length - TrimmedProtocolLogCharacters;
+        while (removeThrough < protocolLogBuffer.Length &&
+               protocolLogBuffer[removeThrough] != '\n')
+        {
+            removeThrough++;
+        }
+        if (removeThrough < protocolLogBuffer.Length)
+        {
+            removeThrough++;
+        }
+        protocolLogBuffer.Remove(0, removeThrough);
     }
 
     private void PostToUi(Action action)

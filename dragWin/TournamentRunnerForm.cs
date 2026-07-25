@@ -573,19 +573,23 @@ public sealed class TournamentRunnerForm : Form
         var assignments = ReadAssignments();
         if (assignments is null || !ApplyHeatGridInputs(assignments)) return false;
 
-        client.Send("SET", "LANES", tournament.LaneCount.ToString());
-        client.Send("SET", "MODE", "BRACKET");
-        client.Send("SET", "TREE", "FULL");
-        client.Send("SET", "STAGING_MODE", stagingMode);
-        client.Send(
-            "SET", "STAGED_DELAY",
-            stagedDelayMilliseconds.ToString(CultureInfo.InvariantCulture));
-        client.Send("SET", "HEAT_LANES", string.Join(',', heat.Entries.Select(entry => entry.LaneNumber).Order()));
+        var commands = new List<string[]>
+        {
+            new[] { "SET", "LANES", tournament.LaneCount.ToString() },
+            new[] { "SET", "MODE", "BRACKET" },
+            new[] { "SET", "TREE", "FULL" },
+            new[] { "SET", "STAGING_MODE", stagingMode },
+            new[] { "SET", "STAGED_DELAY", stagedDelayMilliseconds.ToString(CultureInfo.InvariantCulture) },
+            new[] { "SET", "HEAT_LANES", string.Join(',', heat.Entries.Select(entry => entry.LaneNumber).Order()) }
+        };
         foreach (var entry in heat.Entries)
         {
-            client.Send("SET", "DIAL", entry.LaneNumber.ToString(), entry.DialMilliseconds.ToString());
+            commands.Add([
+                "SET", "DIAL", entry.LaneNumber.ToString(),
+                entry.DialMilliseconds.ToString()]);
         }
-        client.Send("RESET");
+        commands.Add(["RESET"]);
+        client.SendBatch(commands);
         AddTimeline("Heat armed. Stage only the displayed lanes.");
         SetPhase(RunnerPhase.WaitingForStage);
         sendHeatButton.Enabled = false;

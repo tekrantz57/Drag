@@ -147,10 +147,13 @@ public sealed class PassResultsForm : Form
 
     private void ClientOnMessageReceived(object? sender, ProtocolMessage message)
     {
-        if (!IsDisposed)
+        if (message.Type is not ("EVENT" or "RESULT") ||
+            IsDisposed || !IsHandleCreated)
         {
-            BeginInvoke(() => ProcessMessage(message));
+            return;
         }
+
+        BeginInvoke(() => ProcessMessage(message));
     }
 
     private void ProcessMessage(ProtocolMessage message)
