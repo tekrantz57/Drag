@@ -19,6 +19,7 @@ public sealed class TournamentRunnerForm : Form
     private readonly RaceRepository repository;
     private readonly DragSerialClient client;
     private readonly int stagedDelayMilliseconds;
+    private readonly string stagingMode;
     private readonly TournamentPlanner planner = new();
     private readonly Label heading = new()
     {
@@ -117,12 +118,14 @@ public sealed class TournamentRunnerForm : Form
         Tournament tournament,
         RaceRepository repository,
         DragSerialClient client,
-        int stagedDelayMilliseconds)
+        int stagedDelayMilliseconds,
+        string stagingMode)
     {
         this.tournament = tournament;
         this.repository = repository;
         this.client = client;
         this.stagedDelayMilliseconds = Math.Clamp(stagedDelayMilliseconds, 0, 5000);
+        this.stagingMode = stagingMode == "IN_ORDER" ? "IN_ORDER" : "BOTH_BLOCKED";
         Text = $"Run Tournament - {tournament.Name}";
         MinimumSize = new Size(980, 680);
         Size = new Size(1180, 760);
@@ -573,6 +576,7 @@ public sealed class TournamentRunnerForm : Form
         client.Send("SET", "LANES", tournament.LaneCount.ToString());
         client.Send("SET", "MODE", "BRACKET");
         client.Send("SET", "TREE", "FULL");
+        client.Send("SET", "STAGING_MODE", stagingMode);
         client.Send(
             "SET", "STAGED_DELAY",
             stagedDelayMilliseconds.ToString(CultureInfo.InvariantCulture));

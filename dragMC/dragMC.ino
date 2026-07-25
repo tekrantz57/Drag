@@ -7,8 +7,8 @@ constexpr uint8_t MAX_LANE_COUNT = 4;
 constexpr uint8_t LIGHTS_PER_LANE = 7;
 constexpr uint8_t SENSORS_PER_LANE = 4;
 constexpr char FIRMWARE_NAME[] = "DRAG_MC";
-constexpr char FIRMWARE_VERSION[] = "0.4.0";
-constexpr uint8_t PROTOCOL_VERSION = 3;
+constexpr char FIRMWARE_VERSION[] = "0.5.0";
+constexpr uint8_t PROTOCOL_VERSION = 4;
 
 enum LightIndex : uint8_t {
   PreStageLight,
@@ -70,6 +70,7 @@ constexpr unsigned long HEARTBEAT_INTERVAL_MS = 1000;
 
 enum class RaceMode : uint8_t { HeadsUp, Bracket };
 enum class TreeMode : uint8_t { Full, Pro };
+enum class StagingMode : uint8_t { BothBlocked, InOrder };
 enum class TreeState : uint8_t {
   WaitingForAllLanes,
   StagingHold,
@@ -197,6 +198,7 @@ unsigned long speedTrapLengthInX1000 =
 
 RaceMode raceMode = RaceMode::HeadsUp;
 TreeMode treeMode = TreeMode::Full;
+StagingMode stagingMode = StagingMode::BothBlocked;
 unsigned long stagedDelayMs = DEFAULT_STAGED_DELAY_MS;
 uint8_t activeLaneCount = MAX_LANE_COUNT;
 uint8_t heatLaneMask = 0x0F;
@@ -205,6 +207,7 @@ unsigned long stateStartedAtMs = 0;
 unsigned long raceEpochMs = 0;
 unsigned long raceEpochUs = 0;
 unsigned long slowestDialMs = DEFAULT_DIAL_MS;
+bool preStageLatched[MAX_LANE_COUNT] = {};
 char serialOutputQueue[SERIAL_QUEUE_CAPACITY][SERIAL_FRAME_SIZE];
 uint8_t serialQueueHead = 0;
 uint8_t serialQueueTail = 0;
@@ -368,6 +371,7 @@ void turnOffRaceLights() {
 void resetLaneResults() {
   for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
     lanes[lane] = LaneRace{};
+    preStageLatched[lane] = false;
   }
 }
 
@@ -377,6 +381,12 @@ const char* raceModeName() {
 
 const char* treeModeName() {
   return treeMode == TreeMode::Full ? "FULL" : "PRO";
+}
+
+const char* stagingModeName() {
+  return stagingMode == StagingMode::BothBlocked
+             ? "BOTH_BLOCKED"
+             : "IN_ORDER";
 }
 
 unsigned long treeGreenDelayMs() {
@@ -485,12 +495,30 @@ void enterState(const TreeState newState, const unsigned long nowMs) {
 bool allLanesAreStaged() {
   for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
     if (!laneParticipates(lane)) continue;
-    if (!sensors[lane][PreStageSensor].isBlocked() ||
-        !sensors[lane][StageSensor].isBlocked()) {
+    const bool preStageSatisfied =
+        stagingMode == StagingMode::BothBlocked
+            ? sensors[lane][PreStageSensor].isBlocked()
+            : preStageLatched[lane];
+    if (!preStageSatisfied || !sensors[lane][StageSensor].isBlocked()) {
       return false;
     }
   }
   return true;
+}
+
+void updateSequentialStaging() {
+  if (stagingMode != StagingMode::InOrder ||
+      treeState != TreeState::WaitingForAllLanes) {
+    return;
+  }
+
+  for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
+    if (!laneParticipates(lane) || preStageLatched[lane]) continue;
+    if (sensors[lane][PreStageSensor].isBlocked() &&
+        !sensors[lane][StageSensor].isBlocked()) {
+      preStageLatched[lane] = true;
+    }
+  }
 }
 
 bool allLanesHaveResults() {
@@ -517,7 +545,9 @@ void updateStagingLights() {
     setLaneLight(
         lane,
         PreStageLight,
-        active && sensors[lane][PreStageSensor].isBlocked());
+        active &&
+            (sensors[lane][PreStageSensor].isBlocked() ||
+             (stagingMode == StagingMode::InOrder && preStageLatched[lane])));
     setLaneLight(
         lane,
         StageLight,
@@ -848,16 +878,17 @@ void sendStatus() {
 
   snprintf(
       message, sizeof(message),
-      "STATUS:SETTINGS:TREE:%s:STAGED_DELAY_MS:%lu",
-      treeModeName(), stagedDelayMs);
+      "STATUS:SETTINGS:TREE:%s:STAGED_DELAY_MS:%lu:STAGING_MODE:%s",
+      treeModeName(), stagedDelayMs, stagingModeName());
   sendProtocolMessage(message);
 
   for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
     snprintf(
         message, sizeof(message),
-        "STATUS:LANE:%u:DIAL_MS:%lu:PRESTAGE:%u:STAGE:%u:SPEED_TRAP:%u:FINISH:%u:FOUL:%u:FINISHED:%u",
+        "STATUS:LANE:%u:DIAL_MS:%lu:PRESTAGE:%u:PRESTAGE_LATCHED:%u:STAGE:%u:SPEED_TRAP:%u:FINISH:%u:FOUL:%u:FINISHED:%u",
         lane + 1, dialMs[lane],
         sensors[lane][PreStageSensor].isBlocked() ? 1 : 0,
+        preStageLatched[lane] ? 1 : 0,
         sensors[lane][StageSensor].isBlocked() ? 1 : 0,
         sensors[lane][SpeedTrapSensor].isBlocked() ? 1 : 0,
         sensors[lane][FinishSensor].isBlocked() ? 1 : 0,
@@ -978,6 +1009,27 @@ void processSetCommand(char* line) {
     snprintf(
         message, sizeof(message), "ACK:SET:STAGED_DELAY:%lu",
         stagedDelayMs);
+    sendProtocolMessage(message);
+    return;
+  }
+
+  if (strcmp(setting, "STAGING_MODE") == 0 && value2 == nullptr) {
+    if (strcmp(value1, "BOTH_BLOCKED") == 0) {
+      stagingMode = StagingMode::BothBlocked;
+    } else if (strcmp(value1, "IN_ORDER") == 0) {
+      stagingMode = StagingMode::InOrder;
+    } else {
+      sendProtocolMessage("ERROR:VALUE:STAGING_MODE");
+      return;
+    }
+    for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
+      preStageLatched[lane] = false;
+    }
+    updateStagingLights();
+    char message[44];
+    snprintf(
+        message, sizeof(message), "ACK:SET:STAGING_MODE:%s",
+        stagingModeName());
     sendProtocolMessage(message);
     return;
   }
@@ -1246,6 +1298,7 @@ void loop() {
     }
   }
   updateSerialCommands();
+  updateSequentialStaging();
   updateStagingLights();
   updateTree(nowMs);
   updateHeartbeat(nowMs);

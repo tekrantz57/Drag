@@ -17,6 +17,8 @@ public sealed class MainForm : Form
     private DateTimeOffset lastMainButtonActionAt;
     private DateTimeOffset? autoConnectDeadline;
     private string? rememberedControllerPortThisSession;
+    private AppSettings persistedSettings = AppSettingsStore.Load();
+    private bool savedSettingsAppliedToController;
     private readonly ToolStripMenuItem configureRaceMenuItem = new("Race and track settings...");
     private readonly ToolStripMenuItem pingMenuItem = new("Ping controller") { Enabled = false };
     private readonly ToolStripMenuItem statusMenuItem = new("Request controller status") { Enabled = false };
@@ -99,6 +101,11 @@ public sealed class MainForm : Form
         Width = 70,
         Enabled = false
     };
+    private readonly ComboBox stagingModeSelector = new()
+    {
+        DropDownStyle = ComboBoxStyle.DropDownList,
+        Enabled = false
+    };
     private readonly NumericUpDown stagedDelayInput = new()
     {
         DecimalPlaces = 3,
@@ -167,7 +174,11 @@ public sealed class MainForm : Form
         treeModeSelector.Items.AddRange(["FULL", "PRO"]);
         treeModeSelector.SelectedItem = "FULL";
         treeModeSelector.Enabled = true;
+        stagingModeSelector.Items.AddRange(["BOTH_BLOCKED", "IN_ORDER"]);
+        stagingModeSelector.SelectedItem = "BOTH_BLOCKED";
+        stagingModeSelector.Enabled = true;
         InitializeDialInputs();
+        LoadPersistedSettingsIntoControls();
         UiStyles.ConfigurePrimaryButton(startPracticeButton, UiStyles.BlueAction);
         UiStyles.ConfigurePrimaryButton(runTournamentButton, UiStyles.GreenAction);
         connectButton.UseVisualStyleBackColor = false;
@@ -363,7 +374,7 @@ public sealed class MainForm : Form
             var check = new CheckBox
             {
                 AutoSize = true,
-                Checked = true,
+                Checked = persistedSettings.PracticeLanes.Contains(lane + 1),
                 Enabled = false,
                 Margin = new Padding(0, 5, 18, 5),
                 Text = $"Lane {lane + 1}"
@@ -430,6 +441,7 @@ public sealed class MainForm : Form
 
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
+        SaveCurrentSettings();
         heartbeatTimer.Stop();
         heartbeatTimer.Dispose();
         client.Dispose();
@@ -600,7 +612,8 @@ public sealed class MainForm : Form
             tournament,
             raceRepository,
             client,
-            decimal.ToInt32(stagedDelayInput.Value * 1000M)).ShowDialog(this);
+            decimal.ToInt32(stagedDelayInput.Value * 1000M),
+            stagingModeSelector.SelectedItem as string ?? "BOTH_BLOCKED").ShowDialog(this);
         RefreshTournaments();
     }
 
@@ -624,6 +637,7 @@ public sealed class MainForm : Form
             }
 
             client.Connect(portName);
+            savedSettingsAppliedToController = false;
             SetConnectedState(true);
             AppendLog($"Connected to {portName} at 115200 baud.");
             AppendLog($"Serial log: {client.LogPath}");
@@ -657,6 +671,9 @@ public sealed class MainForm : Form
         SendCommand("SET", "LANES", laneCount.ToString(CultureInfo.InvariantCulture));
         SendCommand("SET", "MODE", mode);
         SendCommand("SET", "TREE", treeMode);
+        SendCommand(
+            "SET", "STAGING_MODE",
+            stagingModeSelector.SelectedItem as string ?? "BOTH_BLOCKED");
         SendCommand(
             "SET",
             "STAGED_DELAY",
@@ -704,6 +721,7 @@ public sealed class MainForm : Form
         {
             return;
         }
+        SaveCurrentSettings();
         SendCommand("SET", "HEAT_LANES", string.Join(',', selectedLanes));
         SendCommand("RESET");
         BeginPracticePassResults(selectedLanes);
@@ -856,6 +874,7 @@ public sealed class MainForm : Form
             modeSelector.SelectedItem as string ?? "BRACKET",
             SelectedLaneCount(),
             treeModeSelector.SelectedItem as string ?? "FULL",
+            stagingModeSelector.SelectedItem as string ?? "BOTH_BLOCKED",
             stagedDelayInput.Value,
             dialInputs.Select(input => input.Value).ToArray(),
             trackLengthInput.Value,
@@ -869,6 +888,7 @@ public sealed class MainForm : Form
         modeSelector.SelectedItem = dialog.RaceMode;
         laneCountSelector.SelectedItem = dialog.LaneCount.ToString(CultureInfo.InvariantCulture);
         treeModeSelector.SelectedItem = dialog.TreeMode;
+        stagingModeSelector.SelectedItem = dialog.StagingMode;
         stagedDelayInput.Value = dialog.StagedDelaySeconds;
         trackLengthInput.Value = dialog.TrackLengthInches;
         speedTrapLengthInput.Value = dialog.SpeedTrapLengthInches;
@@ -878,10 +898,12 @@ public sealed class MainForm : Form
         }
 
         UpdateDialInputState();
+        SaveCurrentSettings();
         UpdateSettingsSummary();
         AppendLog(
             $"Settings saved: {dialog.LaneCount} lanes, {dialog.RaceMode}, " +
-            $"{dialog.TreeMode} Tree, {dialog.StagedDelaySeconds:0.000}s staged delay.");
+            $"{dialog.TreeMode} Tree, {StagingModeLabel(dialog.StagingMode)}, " +
+            $"{dialog.StagedDelaySeconds:0.000}s staged delay.");
         if (client.IsConnected)
         {
             ApplyRaceSettings();
@@ -907,6 +929,7 @@ public sealed class MainForm : Form
         MarkControllerReady();
         if (message.Type == "HEARTBEAT")
         {
+            ApplySavedSettingsAfterConnect(message);
             UpdateConnectionLabel();
             return;
         }
@@ -915,6 +938,7 @@ public sealed class MainForm : Form
 
         if (message.Type == "HELLO")
         {
+            savedSettingsAppliedToController = false;
             UpdateConnectionLabel();
             return;
         }
@@ -967,6 +991,11 @@ public sealed class MainForm : Form
                     stagedDelayMs / 1000M,
                     stagedDelayInput.Minimum,
                     stagedDelayInput.Maximum);
+            }
+            if (fields.TryGetValue("STAGING_MODE", out var stagingMode) &&
+                stagingModeSelector.Items.Contains(stagingMode))
+            {
+                stagingModeSelector.SelectedItem = stagingMode;
             }
             UpdateSettingsSummary();
             return;
@@ -1155,6 +1184,7 @@ public sealed class MainForm : Form
         if (!connected)
         {
             controllerReady = false;
+            savedSettingsAppliedToController = false;
         }
         connectButton.Text = connected ? "Disconnect" : "Connect";
         UpdateConnectButtonAppearance();
@@ -1167,6 +1197,7 @@ public sealed class MainForm : Form
         modeSelector.Enabled = true;
         laneCountSelector.Enabled = true;
         treeModeSelector.Enabled = true;
+        stagingModeSelector.Enabled = true;
         stagedDelayInput.Enabled = true;
         startPracticeButton.Enabled = connected && controllerReady;
         UpdateDialInputState();
@@ -1185,6 +1216,92 @@ public sealed class MainForm : Form
         startPracticeButton.Enabled = true;
         testSensorsMenuItem.Enabled = true;
         RememberConnectedControllerPort();
+    }
+
+    private void ApplySavedSettingsAfterConnect(ProtocolMessage heartbeat)
+    {
+        if (savedSettingsAppliedToController)
+        {
+            return;
+        }
+
+        var stateIndex = -1;
+        for (var index = 0; index < heartbeat.Parts.Count; index++)
+        {
+            if (heartbeat.Parts[index] == "STATE")
+            {
+                stateIndex = index;
+                break;
+            }
+        }
+        if (stateIndex < 0 || stateIndex + 1 >= heartbeat.Parts.Count ||
+            heartbeat.Parts[stateIndex + 1] is not (
+                "WAITING_FOR_ALL_LANES" or "RACE_COMPLETE" or "WAITING_FOR_CLEAR"))
+        {
+            return;
+        }
+
+        if (ApplyRaceSettings())
+        {
+            savedSettingsAppliedToController = true;
+            AppendLog("Saved race and track settings applied to controller.");
+        }
+    }
+
+    private void LoadPersistedSettingsIntoControls()
+    {
+        modeSelector.SelectedItem = persistedSettings.RaceMode;
+        laneCountSelector.SelectedItem = persistedSettings.LaneCount.ToString(CultureInfo.InvariantCulture);
+        treeModeSelector.SelectedItem = persistedSettings.TreeMode;
+        stagingModeSelector.SelectedItem = persistedSettings.StagingMode;
+        stagedDelayInput.Value = Math.Clamp(
+            persistedSettings.StagedDelaySeconds,
+            stagedDelayInput.Minimum,
+            stagedDelayInput.Maximum);
+        trackLengthInput.Value = Math.Clamp(
+            persistedSettings.TrackLengthInches,
+            trackLengthInput.Minimum,
+            trackLengthInput.Maximum);
+        speedTrapLengthInput.Value = Math.Clamp(
+            persistedSettings.SpeedTrapLengthInches,
+            speedTrapLengthInput.Minimum,
+            speedTrapLengthInput.Maximum);
+        for (var lane = 0; lane < LaneCount; lane++)
+        {
+            dialInputs[lane].Value = Math.Clamp(
+                persistedSettings.DialSeconds[lane],
+                dialInputs[lane].Minimum,
+                dialInputs[lane].Maximum);
+        }
+    }
+
+    private void SaveCurrentSettings()
+    {
+        persistedSettings = new AppSettings
+        {
+            RaceMode = modeSelector.SelectedItem as string ?? "BRACKET",
+            LaneCount = SelectedLaneCount(),
+            TreeMode = treeModeSelector.SelectedItem as string ?? "FULL",
+            StagingMode = stagingModeSelector.SelectedItem as string ?? "BOTH_BLOCKED",
+            StagedDelaySeconds = stagedDelayInput.Value,
+            TrackLengthInches = trackLengthInput.Value,
+            SpeedTrapLengthInches = speedTrapLengthInput.Value,
+            DialSeconds = dialInputs.Select(input => input.Value).ToArray(),
+            PracticeLanes = practiceLaneChecks
+                .Select((input, index) => (input, lane: index + 1))
+                .Where(item => item.input.Checked)
+                .Select(item => item.lane)
+                .ToArray()
+        };
+
+        try
+        {
+            AppSettingsStore.Save(persistedSettings);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            AppendLog($"Could not save race settings: {exception.Message}");
+        }
     }
 
     private void UpdateConnectButtonAppearance()
@@ -1258,8 +1375,13 @@ public sealed class MainForm : Form
         var tree = treeModeSelector.SelectedItem as string ?? "FULL";
         settingsSummaryLabel.Text =
             $"{SelectedLaneCount()} lanes  |  {mode.Replace('_', ' ')}  |  " +
-            $"{tree} Tree  |  {stagedDelayInput.Value:0.000}s delay";
+            $"{tree} Tree  |  " +
+            $"{StagingModeLabel(stagingModeSelector.SelectedItem as string)}  |  " +
+            $"{stagedDelayInput.Value:0.000}s delay";
     }
+
+    private static string StagingModeLabel(string? stagingMode) =>
+        stagingMode == "IN_ORDER" ? "Pre-stage then stage" : "Both beams blocked";
 
     private void UpdateDialInputState()
     {

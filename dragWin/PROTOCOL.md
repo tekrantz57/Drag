@@ -51,6 +51,11 @@ through `5000` milliseconds. The default is `500` ms. If any participating car
 leaves the stage beam during this delay, the start is aborted and staging
 begins again without assigning a red light.
 
+Staging detection defaults to `BOTH_BLOCKED`, which requires the pre-stage and
+stage beams to be blocked at the same time. `IN_ORDER` is intended for manual
+testing: it latches a pre-stage blockage while the stage beam is clear, then
+accepts a later stage blockage even after the pre-stage beam has cleared.
+
 ## Windows-to-controller commands
 
 - `PING`
@@ -66,10 +71,11 @@ begins again without assigning a red light.
 - `SET:TREE:FULL`
 - `SET:TREE:PRO`
 - `SET:STAGED_DELAY:<0-5000-milliseconds>`
+- `SET:STAGING_MODE:<BOTH_BLOCKED|IN_ORDER>`
 - `SET:DIAL:<lane>:<milliseconds>`
 
-Race, Tree, lane, distance, staged-delay, and dial changes are accepted only
-outside staging and an active race.
+Race, Tree, staging-mode, lane, distance, staged-delay, and dial changes are
+accepted only outside staging and an active race.
 
 ## Controller-to-Windows messages
 
@@ -84,10 +90,11 @@ outside staging and an active race.
 - `ACK:SET:MODE:<mode>`
 - `ACK:SET:TREE:<FULL|PRO>`
 - `ACK:SET:STAGED_DELAY:<milliseconds>`
+- `ACK:SET:STAGING_MODE:<BOTH_BLOCKED|IN_ORDER>`
 - `ACK:SET:DIAL:<lane>:<milliseconds>`
 - `STATUS:TREE:<state>:MODE:<mode>:LANES:<2|4>:HEAT_LANES:<list>:TRACK_IN_X1000:<value>:TRAP_IN_X1000:<value>`
-- `STATUS:SETTINGS:TREE:<FULL|PRO>:STAGED_DELAY_MS:<milliseconds>`
-- `STATUS:LANE:<lane>:DIAL_MS:<milliseconds>:PRESTAGE:<0|1>:STAGE:<0|1>:SPEED_TRAP:<0|1>:FINISH:<0|1>:FOUL:<0|1>:FINISHED:<0|1>`
+- `STATUS:SETTINGS:TREE:<FULL|PRO>:STAGED_DELAY_MS:<milliseconds>:STAGING_MODE:<BOTH_BLOCKED|IN_ORDER>`
+- `STATUS:LANE:<lane>:DIAL_MS:<milliseconds>:PRESTAGE:<0|1>:PRESTAGE_LATCHED:<0|1>:STAGE:<0|1>:SPEED_TRAP:<0|1>:FINISH:<0|1>:FOUL:<0|1>:FINISHED:<0|1>`
 - `SENSOR:<lane>:<name>:RAW:<0|1>:EDGES:<count>:PULSE_US:<microseconds|NONE>`
 - `EVENT:TREE:<state>`
 - `EVENT:TREE:STAGING_ABORTED`

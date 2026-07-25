@@ -28,6 +28,41 @@ Assert(
     ProtocolMessage.TryParse(stagedDelayCommand, out var stagedDelayMessage, out _),
     "A staged-delay command should round-trip.");
 AssertEqual("750", stagedDelayMessage!.Parts[2]);
+var stagingModeCommand = ProtocolMessage.Create(
+    "SET", "STAGING_MODE", "IN_ORDER").Encode();
+Assert(
+    ProtocolMessage.TryParse(stagingModeCommand, out var stagingModeMessage, out _),
+    "A staging-mode command should round-trip.");
+AssertEqual("IN_ORDER", stagingModeMessage!.Parts[2]);
+
+var settingsPath = Path.Combine(
+    Path.GetTempPath(), $"dragWin-settings-{Guid.NewGuid():N}.json");
+try
+{
+    AppSettingsStore.Save(new AppSettings
+    {
+        RaceMode = "HEADS_UP",
+        LaneCount = 2,
+        TreeMode = "PRO",
+        StagingMode = "IN_ORDER",
+        StagedDelaySeconds = 0.750M,
+        TrackLengthInches = 1320M,
+        SpeedTrapLengthInches = 66M,
+        DialSeconds = [7.1M, 7.2M, 7.3M, 7.4M],
+        PracticeLanes = [1, 4]
+    }, settingsPath);
+    var loadedSettings = AppSettingsStore.Load(settingsPath);
+    AssertEqual("HEADS_UP", loadedSettings.RaceMode);
+    AssertEqual(2, loadedSettings.LaneCount);
+    AssertEqual("IN_ORDER", loadedSettings.StagingMode);
+    AssertEqual(0.750M, loadedSettings.StagedDelaySeconds);
+    AssertEqual(7.4M, loadedSettings.DialSeconds[3]);
+    AssertEqual(4, loadedSettings.PracticeLanes[1]);
+}
+finally
+{
+    File.Delete(settingsPath);
+}
 var eventWithMetadata = ProtocolMessage.Create(
     "EVENT", "LANE", "1", "GREEN", "SEQ", "42", "MS", "123456").Encode();
 Assert(
