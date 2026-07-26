@@ -32,8 +32,8 @@ public sealed class PassResultsForm : Form
     {
         this.client = client;
         Text = "Practice Pass Results";
-        MinimumSize = new Size(780, 420);
-        Size = new Size(980, 560);
+        MinimumSize = new Size(980, 420);
+        Size = new Size(1280, 560);
         StartPosition = FormStartPosition.CenterParent;
 
         AddColumn("Pass", "Pass", 35);
@@ -41,6 +41,11 @@ public sealed class PassResultsForm : Form
         AddColumn("Lane", "Lane", 35);
         AddColumn("Reaction", "RT", 48);
         AddColumn("Elapsed", "ET", 48);
+        AddColumn("Split1", "Interval 1", 48);
+        AddColumn("Split2", "Interval 2", 48);
+        AddColumn("Split1To2", "I1-I2", 48);
+        AddColumn("Split2ToTrap", "I2-Trap", 52);
+        AddColumn("TrapToFinish", "Trap-Finish", 58);
         AddColumn("Speed", "MPH", 50);
         AddColumn("Place", "Place", 38);
         AddColumn("Outcome", "Outcome", 100);
@@ -99,7 +104,9 @@ public sealed class PassResultsForm : Form
         FormClosed += (_, _) => client.MessageReceived -= ClientOnMessageReceived;
     }
 
-    public void BeginPass(IReadOnlyCollection<int> lanes)
+    public void BeginPass(
+        IReadOnlyCollection<int> lanes,
+        IReadOnlyCollection<int> splitSensorLanes)
     {
         ArgumentNullException.ThrowIfNull(lanes);
         if (lanes.Count == 0)
@@ -121,8 +128,16 @@ public sealed class PassResultsForm : Form
                 "",
                 "",
                 "",
+                "",
+                "",
+                "",
+                "",
+                "",
                 "Armed");
-            currentResults[lane] = new PassLaneResult(resultsGrid.Rows[rowIndex]);
+            currentResults[lane] = new PassLaneResult(resultsGrid.Rows[rowIndex])
+            {
+                SplitSensorsEnabled = splitSensorLanes.Contains(lane)
+            };
         }
         sessionSummary.Text =
             $"Pass {passNumber}  |  Lane{(lanes.Count == 1 ? "" : "s")} {string.Join(", ", lanes.Order())}";
@@ -182,6 +197,29 @@ public sealed class PassResultsForm : Form
                      TryReadValue(message, out var speedMphX100))
             {
                 result.SpeedMphX100 = speedMphX100;
+            }
+            else if (message.Type == "RESULT" && kind == "INTERVAL_1_US" &&
+                     TryReadValue(message, out var split1Us))
+            {
+                result.Split1Us = split1Us;
+            }
+            else if (message.Type == "RESULT" && kind == "INTERVAL_2_US" &&
+                     TryReadValue(message, out var split2Us))
+            {
+                result.Split2Us = split2Us;
+            }
+            else if (message.Type == "RESULT" && kind == "SPEED_TRAP_US" &&
+                     TryReadValue(message, out var speedTrapUs))
+            {
+                result.SpeedTrapUs = speedTrapUs;
+            }
+            else if (message.Type == "RESULT" && kind == "INTERVAL_1_UNAVAILABLE")
+            {
+                result.Split1Unavailable = true;
+            }
+            else if (message.Type == "RESULT" && kind == "INTERVAL_2_UNAVAILABLE")
+            {
+                result.Split2Unavailable = true;
             }
             else if (message.Type == "RESULT" && kind == "BREAKOUT_US" &&
                      TryReadValue(message, out var breakoutUs))
@@ -263,6 +301,16 @@ public sealed class PassResultsForm : Form
         result.Row.Cells["Elapsed"].Value = result.ElapsedUnavailable
             ? "N/A"
             : FormatSeconds(result.ElapsedUs);
+        result.Row.Cells["Split1"].Value = FormatSplit(
+            result.Split1Us, result.Split1Unavailable, result.SplitSensorsEnabled);
+        result.Row.Cells["Split2"].Value = FormatSplit(
+            result.Split2Us, result.Split2Unavailable, result.SplitSensorsEnabled);
+        result.Row.Cells["Split1To2"].Value = FormatSegment(
+            result.Split1Us, result.Split2Us, result.SplitSensorsEnabled);
+        result.Row.Cells["Split2ToTrap"].Value = FormatSegment(
+            result.Split2Us, result.SpeedTrapUs, result.SplitSensorsEnabled);
+        result.Row.Cells["TrapToFinish"].Value = FormatSegment(
+            result.SpeedTrapUs, result.ElapsedUs, result.SplitSensorsEnabled);
         result.Row.Cells["Speed"].Value = result.SpeedMphX100.HasValue
             ? (result.SpeedMphX100.Value / 100.0).ToString("0.00", CultureInfo.CurrentCulture)
             : result.SpeedInvalid ? "Invalid" : result.SpeedUnavailable ? "N/A" : "";
@@ -291,6 +339,14 @@ public sealed class PassResultsForm : Form
         ? (microseconds.Value / 1_000_000.0).ToString("0.000", CultureInfo.CurrentCulture)
         : "";
 
+    private static string FormatSplit(long? value, bool unavailable, bool enabled) =>
+        value.HasValue ? FormatSeconds(value) : unavailable ? "Missed" : enabled ? "" : "N/A";
+
+    private static string FormatSegment(long? start, long? end, bool enabled) =>
+        start.HasValue && end.HasValue && end >= start
+            ? FormatSeconds(end - start)
+            : enabled ? "" : "N/A";
+
     private void MarkIncompleteRows()
     {
         foreach (var result in currentResults.Values.Where(result => !result.Complete))
@@ -314,6 +370,12 @@ public sealed class PassResultsForm : Form
         public long? ReactionUs { get; set; }
         public long? ElapsedUs { get; set; }
         public long? SpeedMphX100 { get; set; }
+        public bool SplitSensorsEnabled { get; set; }
+        public long? Split1Us { get; set; }
+        public long? Split2Us { get; set; }
+        public long? SpeedTrapUs { get; set; }
+        public bool Split1Unavailable { get; set; }
+        public bool Split2Unavailable { get; set; }
         public long? BreakoutUs { get; set; }
         public int? Place { get; set; }
         public bool Fouled { get; set; }

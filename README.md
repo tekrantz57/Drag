@@ -15,7 +15,8 @@ The repository has two main parts:
 - Controller: Arduino Mega 2560.
 - Serial: USB serial at 115200 baud.
 - Lanes: 4 physical lanes, with optional 2-lane mode using lanes 1 and 4.
-- Sensors: 4 beam sensors per lane: pre-stage, stage, speed trap, and finish.
+- Sensors: 4 required beam sensors per lane plus 2 optional interval timers
+  between stage and the speed trap.
 - Tree: selectable 500 ms Full Tree or 400 ms Pro Tree, with an independently
   configurable staged-to-first-amber delay.
 - Sensor polarity: LM393 slot sensors are active-HIGH on this track. A blocked
@@ -58,6 +59,8 @@ is always written under `%LOCALAPPDATA%\dragWin\Reports`; optional JSON and CSV
 exports can be enabled independently under **Configure > Race and track
 settings... > Reports**. The JSON file is a versioned archive, while the CSV is
 a flat row-per-entrant result file intended for spreadsheets and custom reports.
+Enabled interval timers add cumulative and segment timing to practice results,
+tournament history, HTML reports, JSON archives, and CSV exports.
 
 Serial logs are written by date under:
 

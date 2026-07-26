@@ -5,7 +5,7 @@ namespace DragWin;
 
 public sealed class RaceRepository
 {
-    private const int CurrentSchemaVersion = 3;
+    private const int CurrentSchemaVersion = 4;
     private readonly string connectionString;
     private readonly string automaticBackupDirectory;
 
@@ -147,12 +147,13 @@ public sealed class RaceRepository
                 nameof(safetyBackupPath));
         }
 
-        _ = InspectDatabase(sourcePath, sourcePath);
+        _ = InspectDatabase(sourcePath, sourcePath, requireCurrentSchema: false);
         var safetyBackup = CreateBackup(safetyPath);
 
         try
         {
             CopyDatabase(sourcePath, activePath);
+            Initialize();
             var restoredContents = InspectDatabase(activePath, activePath);
             return new DatabaseRestoreResult(
                 sourcePath,
@@ -432,8 +433,10 @@ public sealed class RaceRepository
                 """
                 INSERT OR REPLACE INTO heat_results(
                     heat_entry_id, legality, finish_order, reaction_us,
-                    breakout_us, advanced)
-                SELECT he.id, $legality, $finish, $reaction, $breakout, $advanced
+                    breakout_us, advanced, elapsed_us, speed_mph_x100,
+                    split_sensors_enabled, split1_us, split2_us, speed_trap_us)
+                SELECT he.id, $legality, $finish, $reaction, $breakout, $advanced,
+                       $elapsed, $speed, $splitsEnabled, $split1, $split2, $speedTrap
                 FROM heat_entries he
                 JOIN heats h ON h.id = he.heat_id
                 JOIN rounds ro ON ro.id = h.round_id
@@ -451,6 +454,17 @@ public sealed class RaceRepository
                 "$breakout", (object?)result.BreakoutMicroseconds ?? DBNull.Value);
             command.Parameters.AddWithValue(
                 "$advanced", advancingCarIds.Contains(result.CarId) ? 1 : 0);
+            command.Parameters.AddWithValue(
+                "$elapsed", (object?)result.ElapsedMicroseconds ?? DBNull.Value);
+            command.Parameters.AddWithValue(
+                "$speed", (object?)result.SpeedMphX100 ?? DBNull.Value);
+            command.Parameters.AddWithValue("$splitsEnabled", result.IntervalTimersEnabled ? 1 : 0);
+            command.Parameters.AddWithValue(
+                "$split1", (object?)result.Interval1Microseconds ?? DBNull.Value);
+            command.Parameters.AddWithValue(
+                "$split2", (object?)result.Interval2Microseconds ?? DBNull.Value);
+            command.Parameters.AddWithValue(
+                "$speedTrap", (object?)result.SpeedTrapMicroseconds ?? DBNull.Value);
             command.Parameters.AddWithValue("$tournament", tournamentId);
             command.Parameters.AddWithValue("$round", roundNumber);
             command.Parameters.AddWithValue("$heat", heatNumber);
@@ -597,7 +611,9 @@ public sealed class RaceRepository
             SELECT ro.round_number, h.heat_number, he.lane_number,
                    he.lane_choice_order, r.name, c.name, he.dial_ms,
                    he.is_bye, hr.legality, hr.finish_order, hr.reaction_us,
-                   hr.breakout_us, hr.advanced, hc.confirmed_utc
+                   hr.breakout_us, hr.advanced, hc.confirmed_utc,
+                   hr.elapsed_us, hr.speed_mph_x100, hr.split_sensors_enabled,
+                   hr.split1_us, hr.split2_us, hr.speed_trap_us
             FROM rounds ro
             JOIN heats h ON h.round_id = ro.id
             JOIN heat_entries he ON he.heat_id = h.id
@@ -644,7 +660,13 @@ public sealed class RaceRepository
                 reader.IsDBNull(10) ? null : reader.GetInt64(10),
                 reader.IsDBNull(11) ? null : reader.GetInt64(11),
                 !reader.IsDBNull(12) && reader.GetInt32(12) != 0,
-                confirmedAt));
+                confirmedAt,
+                reader.IsDBNull(14) ? null : reader.GetInt64(14),
+                reader.IsDBNull(15) ? null : reader.GetInt64(15),
+                !reader.IsDBNull(16) && reader.GetInt32(16) != 0,
+                reader.IsDBNull(17) ? null : reader.GetInt64(17),
+                reader.IsDBNull(18) ? null : reader.GetInt64(18),
+                reader.IsDBNull(19) ? null : reader.GetInt64(19)));
         }
 
         return new TournamentReport(tournament, status, createdAt, rows);
@@ -919,7 +941,13 @@ public sealed class RaceRepository
                 finish_order INTEGER NOT NULL,
                 reaction_us INTEGER,
                 breakout_us INTEGER,
-                advanced INTEGER NOT NULL CHECK(advanced IN (0, 1))
+                advanced INTEGER NOT NULL CHECK(advanced IN (0, 1)),
+                elapsed_us INTEGER,
+                speed_mph_x100 INTEGER,
+                split_sensors_enabled INTEGER NOT NULL DEFAULT 0 CHECK(split_sensors_enabled IN (0, 1)),
+                split1_us INTEGER,
+                split2_us INTEGER,
+                speed_trap_us INTEGER
             );
             CREATE TABLE IF NOT EXISTS heat_confirmations (
                 heat_id INTEGER PRIMARY KEY REFERENCES heats(id),
@@ -928,7 +956,36 @@ public sealed class RaceRepository
             """;
         command.ExecuteNonQuery();
         EnsureHeatEntryDialColumn(connection);
+        EnsureHeatResultTimingColumns(connection);
         SetUserVersion(connection, CurrentSchemaVersion);
+    }
+
+    private static void EnsureHeatResultTimingColumns(SqliteConnection connection)
+    {
+        using var checkCommand = connection.CreateCommand();
+        checkCommand.CommandText = "PRAGMA table_info(heat_results);";
+        var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        using (var reader = checkCommand.ExecuteReader())
+        {
+            while (reader.Read()) columns.Add(reader.GetString(1));
+        }
+
+        var additions = new (string Name, string Definition)[]
+        {
+            ("elapsed_us", "INTEGER"),
+            ("speed_mph_x100", "INTEGER"),
+            ("split_sensors_enabled", "INTEGER NOT NULL DEFAULT 0 CHECK(split_sensors_enabled IN (0, 1))"),
+            ("split1_us", "INTEGER"),
+            ("split2_us", "INTEGER"),
+            ("speed_trap_us", "INTEGER")
+        };
+        foreach (var addition in additions.Where(item => !columns.Contains(item.Name)))
+        {
+            using var alterCommand = connection.CreateCommand();
+            alterCommand.CommandText =
+                $"ALTER TABLE heat_results ADD COLUMN {addition.Name} {addition.Definition};";
+            alterCommand.ExecuteNonQuery();
+        }
     }
 
     private void BackUpBeforeSchemaUpgrade()
@@ -1042,7 +1099,8 @@ public sealed class RaceRepository
 
     private static DatabaseBackupResult InspectDatabase(
         string databasePath,
-        string reportedPath)
+        string reportedPath,
+        bool requireCurrentSchema = true)
     {
         using var connection = new SqliteConnection(
             new SqliteConnectionStringBuilder
@@ -1073,7 +1131,8 @@ public sealed class RaceRepository
             var version = Convert.ToInt32(
                 versionCommand.ExecuteScalar(),
                 CultureInfo.InvariantCulture);
-            if (version != CurrentSchemaVersion)
+            if (version > CurrentSchemaVersion ||
+                (requireCurrentSchema && version != CurrentSchemaVersion))
             {
                 throw new InvalidDataException(
                     $"This database uses schema version {version}; " +

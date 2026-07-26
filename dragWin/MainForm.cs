@@ -809,6 +809,7 @@ public sealed class MainForm : Form
             client,
             decimal.ToInt32(stagedDelayInput.Value * 1000M),
             stagingModeSelector.SelectedItem as string ?? "BOTH_BLOCKED",
+            persistedSettings.IntervalTimerLanes,
             new TournamentReportExportOptions(
                 persistedSettings.ExportTournamentJson,
                 persistedSettings.ExportTournamentCsv)).ShowDialog(this);
@@ -887,6 +888,11 @@ public sealed class MainForm : Form
             "SET", "DISTANCES",
             ToThousandthsOfAnInch(trackLengthInput.Value),
             ToThousandthsOfAnInch(speedTrapLengthInput.Value)]);
+        commands.Add([
+            "SET", "INTERVAL_LANES",
+            persistedSettings.IntervalTimerLanes.Length == 0
+                ? "NONE"
+                : string.Join(',', persistedSettings.IntervalTimerLanes)]);
         for (var lane = 0; lane < LaneCount; lane++)
         {
             if (!LaneIsActive(lane, laneCount))
@@ -953,7 +959,8 @@ public sealed class MainForm : Form
             lane => decimal.ToInt32(dialInputs[lane - 1].Value * 1000M));
         var messages = DemoHeatSimulator.CreatePracticeMessages(
             laneDialMilliseconds,
-            bracketMode).ToArray();
+            bracketMode,
+            splitSensorLanes: persistedSettings.IntervalTimerLanes).ToArray();
         var resultsForm = BeginPracticePassResults(selectedLanes);
         resultsForm.ProcessMessages(messages);
 
@@ -979,7 +986,7 @@ public sealed class MainForm : Form
             passResultsForm.BringToFront();
         }
 
-        passResultsForm.BeginPass(lanes);
+        passResultsForm.BeginPass(lanes, persistedSettings.IntervalTimerLanes);
         return passResultsForm;
     }
 
@@ -1025,6 +1032,18 @@ public sealed class MainForm : Form
                          long.TryParse(message.Parts[4], out var breakoutUs))
                 {
                     result.BreakoutUs = breakoutUs;
+                }
+                else if (message.Type == "RESULT" && kind == "INTERVAL_1_US" &&
+                         message.Parts.Count > 4 &&
+                         long.TryParse(message.Parts[4], out var interval1Us))
+                {
+                    result.Interval1Us = interval1Us;
+                }
+                else if (message.Type == "RESULT" && kind == "INTERVAL_2_US" &&
+                         message.Parts.Count > 4 &&
+                         long.TryParse(message.Parts[4], out var interval2Us))
+                {
+                    result.Interval2Us = interval2Us;
                 }
                 else if (message.Type == "RESULT" && kind == "VALID")
                 {
@@ -1085,6 +1104,7 @@ public sealed class MainForm : Form
             dialInputs.Select(input => input.Value).ToArray(),
             trackLengthInput.Value,
             speedTrapLengthInput.Value,
+            persistedSettings.IntervalTimerLanes,
             persistedSettings.ExportTournamentJson,
             persistedSettings.ExportTournamentCsv,
             client.IsConnected);
@@ -1102,6 +1122,7 @@ public sealed class MainForm : Form
         speedTrapLengthInput.Value = dialog.SpeedTrapLengthInches;
         persistedSettings.ExportTournamentJson = dialog.ExportTournamentJson;
         persistedSettings.ExportTournamentCsv = dialog.ExportTournamentCsv;
+        persistedSettings.IntervalTimerLanes = dialog.IntervalTimerLanes.ToArray();
         for (var lane = 0; lane < LaneCount; lane++)
         {
             dialInputs[lane].Value = dialog.DialSeconds[lane];
@@ -1533,6 +1554,7 @@ public sealed class MainForm : Form
                 .Where(item => item.input.Checked)
                 .Select(item => item.lane)
                 .ToArray(),
+            IntervalTimerLanes = persistedSettings.IntervalTimerLanes.ToArray(),
             ExportTournamentJson = persistedSettings.ExportTournamentJson,
             ExportTournamentCsv = persistedSettings.ExportTournamentCsv
         };
@@ -1690,6 +1712,14 @@ public sealed class MainForm : Form
         {
             parts.Add($"ET {FormatSeconds(result.ElapsedUs.Value)}s");
         }
+        if (result.Interval1Us.HasValue)
+        {
+            parts.Add($"interval 1 {FormatSeconds(result.Interval1Us.Value)}s");
+        }
+        if (result.Interval2Us.HasValue)
+        {
+            parts.Add($"interval 2 {FormatSeconds(result.Interval2Us.Value)}s");
+        }
         if (result.SpeedMphX100.HasValue)
         {
             parts.Add($"MPH {result.SpeedMphX100.Value / 100.0:0.00}");
@@ -1789,6 +1819,8 @@ public sealed class MainForm : Form
         public int? Place { get; set; }
         public long? ReactionUs { get; set; }
         public long? ElapsedUs { get; set; }
+        public long? Interval1Us { get; set; }
+        public long? Interval2Us { get; set; }
         public long? BreakoutUs { get; set; }
         public long? SpeedMphX100 { get; set; }
     }

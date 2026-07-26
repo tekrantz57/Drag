@@ -87,7 +87,9 @@ behavior.
 
 ## Sensor Pin Map
 
-Each lane currently has four sensors: pre-stage, stage, speed trap, and finish.
+Each lane has four required sensors and two optional interval timers. The
+interval timers are physically between stage and the speed trap and default to
+disabled in dragWin.
 Lane 1 has been fully wired and tested on A0 through A3. Sensor Test validated
 all four inputs, and cardboard beam interruptions produced complete passes.
 
@@ -97,12 +99,16 @@ are collected before the firmware's 2 ms race debounce. Use them during moving
 car tests on A2 and A3: the count confirms that a pulse reached the Mega, and
 the pulse width shows whether it was long enough to pass the current debounce.
 
-| Lane | Pre-stage | Stage | Speed trap | Finish |
-| --- | --- | --- | --- | --- |
-| 1 | A0 | A1 | A2 | A3 |
-| 2 | A4 | A5 | A6 | A7 |
-| 3 | A8 | A9 | A10 | A11 |
-| 4 | A12 | A13 | A14 | A15 |
+| Lane | Pre-stage | Stage | Interval 1 | Interval 2 | Speed trap | Finish |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | A0 | A1 | D2 | D3 | A2 | A3 |
+| 2 | A4 | A5 | D4 | D5 | A6 | A7 |
+| 3 | A8 | A9 | D6 | D7 | A10 | A11 |
+| 4 | A12 | A13 | D8 | D9 | A14 | A15 |
+
+Enable installed pairs per lane under **Configure > Race and track settings...
+> Track**. Disabled interval inputs are ignored, so unwired `D2` through `D9`
+cannot interfere with pass completion or track-clear detection.
 
 ## Track Mounting and Guide-flag Clearance
 
@@ -135,10 +141,8 @@ amber 3, green, and red.
 Two-lane mode uses physical lanes 1 and 4. Lanes 2 and 3 are ignored and their
 race lights are forced off.
 
-## Future Split Sensors
+## Interval Timing
 
-The track will probably add two intermediate/split sensors per lane later.
-Treat them as optional diagnostic or split-timing sensors until the venue's
-exact use is confirmed. Adding them for all four lanes would raise the sensor
-count from 16 to 24 and require expanding the pin map beyond `A0` through
-`A15`.
+Interval 1 and Interval 2 report cumulative times from launch. dragWin also
+calculates Interval 1-to-Interval 2, Interval 2-to-speed-trap, and
+speed-trap-to-finish segments for practice and tournament reports.

@@ -40,6 +40,11 @@ Sensor status fields use logical blocked state, not raw voltage. With the
 current active-HIGH LM393 sensors, `1` means the beam is blocked and `0` means
 the beam is clear.
 
+Each lane may optionally enable two interval timers between stage and the speed
+trap. Their pins are always initialized, but disabled interval timers are
+ignored by race and track-clear logic. Interval times are cumulative from the
+stage beam clearing at launch.
+
 ## Tree modes
 
 - `FULL`: amber 1, amber 2, amber 3, and green are separated by 500 ms.
@@ -65,6 +70,7 @@ accepts a later stage blockage even after the pre-stage beam has cleared.
 - `RESET`
 - `SET:LANES:<2|4>`
 - `SET:HEAT_LANES:<comma-separated-physical-lanes>`
+- `SET:INTERVAL_LANES:<NONE|comma-separated-physical-lanes>`
 - `SET:DISTANCES:<track-inches-x1000>:<trap-inches-x1000>`
 - `SET:MODE:HEADS_UP`
 - `SET:MODE:BRACKET`
@@ -86,6 +92,7 @@ accepted only outside staging and an active race.
 - `ACK:RESET_SENSOR_DIAGNOSTICS`
 - `ACK:SET:LANES:<2|4>`
 - `ACK:SET:HEAT_LANES:<comma-separated-physical-lanes>`
+- `ACK:SET:INTERVAL_LANES:<NONE|comma-separated-physical-lanes>`
 - `ACK:SET:DISTANCES:<track-inches-x1000>:<trap-inches-x1000>`
 - `ACK:SET:MODE:<mode>`
 - `ACK:SET:TREE:<FULL|PRO>`
@@ -94,6 +101,8 @@ accepted only outside staging and an active race.
 - `ACK:SET:DIAL:<lane>:<milliseconds>`
 - `STATUS:TREE:<state>:MODE:<mode>:LANES:<2|4>:HEAT_LANES:<list>:TRACK_IN_X1000:<value>:TRAP_IN_X1000:<value>`
 - `STATUS:SETTINGS:TREE:<FULL|PRO>:STAGED_DELAY_MS:<milliseconds>:STAGING_MODE:<BOTH_BLOCKED|IN_ORDER>`
+- `STATUS:INTERVAL_LANES:<NONE|comma-separated-physical-lanes>`
+- `STATUS:INTERVALS:LANE:<lane>:ENABLED:<0|1>:INTERVAL_1:<0|1>:INTERVAL_2:<0|1>`
 - `STATUS:LANE:<lane>:DIAL_MS:<milliseconds>:PRESTAGE:<0|1>:PRESTAGE_LATCHED:<0|1>:STAGE:<0|1>:SPEED_TRAP:<0|1>:FINISH:<0|1>:FOUL:<0|1>:FINISHED:<0|1>`
 - `SENSOR:<lane>:<name>:RAW:<0|1>:EDGES:<count>:PULSE_US:<microseconds|NONE>`
 - `EVENT:TREE:<state>`
@@ -104,6 +113,11 @@ accepted only outside staging and an active race.
 - `EVENT:LANE:<lane>:FOUL`
 - `EVENT:LANE:<lane>:REACTION_US:<microseconds>`
 - `EVENT:LANE:<lane>:SPEED_TRAP`
+- `RESULT:LANE:<lane>:INTERVAL_1_US:<microseconds>`
+- `RESULT:LANE:<lane>:INTERVAL_2_US:<microseconds>`
+- `RESULT:LANE:<lane>:INTERVAL_1_UNAVAILABLE`
+- `RESULT:LANE:<lane>:INTERVAL_2_UNAVAILABLE`
+- `RESULT:LANE:<lane>:SPEED_TRAP_US:<microseconds>`
 - `RESULT:LANE:<lane>:ELAPSED_US:<microseconds>`
 - `RESULT:LANE:<lane>:VALID`
 - `RESULT:LANE:<lane>:BREAKOUT_US:<microseconds>`
@@ -133,6 +147,12 @@ race debounce is applied. `EDGES` counts clear-to-blocked transitions.
 `NONE` if no pulse has completed since startup or the last diagnostic reset.
 Counters saturate rather than wrapping and can be cleared without resetting
 the race controller.
+
+An enabled interval timer sends its cumulative launch-relative time when its
+beam is blocked. If the finish is reached without that interval, the controller
+sends the corresponding `UNAVAILABLE` result. Missing or disabled interval
+timers never prevent a pass from finishing. Segment times are calculated by
+Windows from adjacent cumulative values.
 
 `REACTION_US` is sent for both legal and foul starts; a negative value is the
 amount by which the lane left before green. It precedes the lane's `FOUL`

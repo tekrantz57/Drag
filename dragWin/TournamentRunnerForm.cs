@@ -20,6 +20,7 @@ public sealed class TournamentRunnerForm : Form
     private readonly DragSerialClient client;
     private readonly int stagedDelayMilliseconds;
     private readonly string stagingMode;
+    private readonly HashSet<int> splitSensorLanes;
     private readonly TournamentReportExportOptions reportExportOptions;
     private readonly TournamentPlanner planner = new();
     private readonly Label heading = new()
@@ -121,6 +122,7 @@ public sealed class TournamentRunnerForm : Form
         DragSerialClient client,
         int stagedDelayMilliseconds,
         string stagingMode,
+        IReadOnlyCollection<int> splitSensorLanes,
         TournamentReportExportOptions reportExportOptions)
     {
         this.tournament = tournament;
@@ -128,6 +130,7 @@ public sealed class TournamentRunnerForm : Form
         this.client = client;
         this.stagedDelayMilliseconds = Math.Clamp(stagedDelayMilliseconds, 0, 5000);
         this.stagingMode = stagingMode == "IN_ORDER" ? "IN_ORDER" : "BOTH_BLOCKED";
+        this.splitSensorLanes = splitSensorLanes.ToHashSet();
         this.reportExportOptions = reportExportOptions;
         Text = $"Run Tournament - {tournament.Name}";
         MinimumSize = new Size(980, 680);
@@ -185,6 +188,8 @@ public sealed class TournamentRunnerForm : Form
         });
         lanesGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Reaction", HeaderText = "RT", ReadOnly = true, FillWeight = 45 });
         lanesGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Elapsed", HeaderText = "ET", ReadOnly = true, FillWeight = 45 });
+        lanesGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Split1", HeaderText = "Interval 1", ReadOnly = true, FillWeight = 45 });
+        lanesGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Split2", HeaderText = "Interval 2", ReadOnly = true, FillWeight = 45 });
         lanesGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Speed", HeaderText = "MPH", ReadOnly = true, FillWeight = 45 });
         lanesGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Result", HeaderText = "Outcome", ReadOnly = true, FillWeight = 85 });
         lanesGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Status", HeaderText = "Status", ReadOnly = true, FillWeight = 100 });
@@ -327,9 +332,11 @@ public sealed class TournamentRunnerForm : Form
                 "",
                 "",
                 "",
+                "",
+                "",
                 entry.IsBye ? "BYE PASS — guaranteed advance" : "Pending")];
             row.Tag = entry;
-            liveResults[entry.LaneNumber] = new LiveLaneResult();
+            liveResults[entry.LaneNumber] = CreateLiveLaneResult(entry.LaneNumber);
         }
         InitializeLaneChoices();
         AddTimeline($"Round {round.RoundNumber}, heat {heat.HeatNumber} loaded with {heat.Entries.Count} entrants.");
@@ -619,7 +626,9 @@ public sealed class TournamentRunnerForm : Form
         AddTimeline("TEST: Simulated heat results generated.");
         sendHeatButton.Enabled = false;
         SetPhase(RunnerPhase.Racing);
-        foreach (var message in DemoHeatSimulator.CreateBracketHeatMessages(heat))
+        foreach (var message in DemoHeatSimulator.CreateBracketHeatMessages(
+                     heat,
+                     splitSensorLanes: splitSensorLanes))
         {
             ProcessMessage(message);
         }
@@ -643,7 +652,10 @@ public sealed class TournamentRunnerForm : Form
                 }).ToArray()
         };
         liveResults.Clear();
-        foreach (var entry in heat.Entries) liveResults[entry.LaneNumber] = new LiveLaneResult();
+        foreach (var entry in heat.Entries)
+        {
+            liveResults[entry.LaneNumber] = CreateLiveLaneResult(entry.LaneNumber);
+        }
         UpdateStatusCells();
         return true;
     }
@@ -766,6 +778,14 @@ public sealed class TournamentRunnerForm : Form
                 result.ElapsedUs = elapsed;
                 AddTimeline($"Lane {lane} finished in {FormatSeconds(elapsed)} seconds.");
             }
+            if (message.Type == "RESULT" && kind == "INTERVAL_1_US" && message.Parts.Count > 4 &&
+                long.TryParse(message.Parts[4], out var split1)) result.Split1Us = split1;
+            if (message.Type == "RESULT" && kind == "INTERVAL_2_US" && message.Parts.Count > 4 &&
+                long.TryParse(message.Parts[4], out var split2)) result.Split2Us = split2;
+            if (message.Type == "RESULT" && kind == "SPEED_TRAP_US" && message.Parts.Count > 4 &&
+                long.TryParse(message.Parts[4], out var speedTrap)) result.SpeedTrapUs = speedTrap;
+            if (message.Type == "RESULT" && kind == "INTERVAL_1_UNAVAILABLE") result.Split1Unavailable = true;
+            if (message.Type == "RESULT" && kind == "INTERVAL_2_UNAVAILABLE") result.Split2Unavailable = true;
             if (message.Type == "RESULT" && kind == "BREAKOUT_US" && message.Parts.Count > 4 &&
                 long.TryParse(message.Parts[4], out var breakout)) result.BreakoutUs = breakout;
             if (message.Type == "RESULT" && kind == "VALID") result.Valid = true;
@@ -837,6 +857,8 @@ public sealed class TournamentRunnerForm : Form
             if (!liveResults.TryGetValue(lane, out var result)) continue;
             row.Cells["Reaction"].Value = FormatSeconds(result.ReactionUs);
             row.Cells["Elapsed"].Value = FormatSeconds(result.ElapsedUs);
+            row.Cells["Split1"].Value = FormatSplit(result.Split1Us, result.Split1Unavailable, result.SplitSensorsEnabled);
+            row.Cells["Split2"].Value = FormatSplit(result.Split2Us, result.Split2Unavailable, result.SplitSensorsEnabled);
             row.Cells["Speed"].Value = FormatSpeed(result);
             row.Cells["Result"].Value = FormatResult(result);
             row.Cells["Status"].Value = result.Fouled ? "FOUL" :
@@ -863,6 +885,9 @@ public sealed class TournamentRunnerForm : Form
         microseconds.HasValue
             ? (microseconds.Value / 1_000_000.0).ToString("0.000", CultureInfo.CurrentCulture)
             : "";
+
+    private static string FormatSplit(long? microseconds, bool unavailable, bool enabled) =>
+        microseconds.HasValue ? FormatSeconds(microseconds) : unavailable ? "Missed" : enabled ? "" : "N/A";
 
     private static string FormatSpeed(LiveLaneResult result)
     {
@@ -926,7 +951,7 @@ public sealed class TournamentRunnerForm : Form
 
     private RunResult[] BuildRunResults() => heat.Entries.Select(entry =>
     {
-        var live = liveResults.GetValueOrDefault(entry.LaneNumber) ?? new LiveLaneResult();
+        var live = liveResults.GetValueOrDefault(entry.LaneNumber) ?? CreateLiveLaneResult(entry.LaneNumber);
         var legality = live.Fouled ? RunLegality.RedLight :
             live.BreakoutUs.HasValue ? RunLegality.Breakout :
             live.Finished ? RunLegality.Legal : RunLegality.DidNotFinish;
@@ -936,7 +961,13 @@ public sealed class TournamentRunnerForm : Form
             live.FinishOrder == 0 ? int.MaxValue : live.FinishOrder,
             live.ReactionUs,
             live.BreakoutUs,
-            entry.IsBye);
+            entry.IsBye,
+            live.ElapsedUs,
+            live.SpeedMphX100,
+            live.SplitSensorsEnabled,
+            live.Split1Us,
+            live.Split2Us,
+            live.SpeedTrapUs);
     }).ToArray();
 
     private void ShowResultsSummary()
@@ -984,11 +1015,11 @@ public sealed class TournamentRunnerForm : Form
         resultAdvancerIds.Clear();
         foreach (var entry in heat.Entries)
         {
-            liveResults[entry.LaneNumber] = new LiveLaneResult();
+            liveResults[entry.LaneNumber] = CreateLiveLaneResult(entry.LaneNumber);
         }
         foreach (DataGridViewRow row in lanesGrid.Rows)
         {
-            foreach (var columnName in new[] { "Reaction", "Elapsed", "Speed", "Result" })
+            foreach (var columnName in new[] { "Reaction", "Elapsed", "Split1", "Split2", "Speed", "Result" })
             {
                 row.Cells[columnName].Value = "";
             }
@@ -1093,6 +1124,11 @@ public sealed class TournamentRunnerForm : Form
         }
     }
 
+    private LiveLaneResult CreateLiveLaneResult(int lane) => new()
+    {
+        SplitSensorsEnabled = splitSensorLanes.Contains(lane)
+    };
+
     private sealed class LiveLaneResult
     {
         public bool Fouled { get; set; }
@@ -1100,6 +1136,12 @@ public sealed class TournamentRunnerForm : Form
         public int FinishOrder { get; set; }
         public long? ReactionUs { get; set; }
         public long? ElapsedUs { get; set; }
+        public bool SplitSensorsEnabled { get; set; }
+        public long? Split1Us { get; set; }
+        public long? Split2Us { get; set; }
+        public long? SpeedTrapUs { get; set; }
+        public bool Split1Unavailable { get; set; }
+        public bool Split2Unavailable { get; set; }
         public long? BreakoutUs { get; set; }
         public long? SpeedMphX100 { get; set; }
         public bool Valid { get; set; }

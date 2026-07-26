@@ -32,6 +32,7 @@ public sealed class RaceSettingsForm : Form
         Dock = DockStyle.Fill
     };
     private readonly NumericUpDown[] dialInputs = new NumericUpDown[PhysicalLaneCount];
+    private readonly CheckBox[] intervalTimerChecks = new CheckBox[PhysicalLaneCount];
     private readonly CheckBox exportJsonCheck = new()
     {
         Text = "Write JSON tournament archive",
@@ -52,6 +53,7 @@ public sealed class RaceSettingsForm : Form
         IReadOnlyList<decimal> dialSeconds,
         decimal trackLengthInches,
         decimal speedTrapLengthInches,
+        IReadOnlyCollection<int> intervalTimerLanes,
         bool exportTournamentJson,
         bool exportTournamentCsv,
         bool controllerConnected)
@@ -80,7 +82,7 @@ public sealed class RaceSettingsForm : Form
 
         var tabs = new TabControl { Dock = DockStyle.Fill };
         tabs.TabPages.Add(CreateRaceTab(dialSeconds));
-        tabs.TabPages.Add(CreateTrackTab());
+        tabs.TabPages.Add(CreateTrackTab(intervalTimerLanes));
         tabs.TabPages.Add(CreateReportsTab());
 
         var saveButton = new Button
@@ -141,6 +143,11 @@ public sealed class RaceSettingsForm : Form
     public decimal TrackLengthInches => trackLengthInput.Value;
     public decimal SpeedTrapLengthInches => speedTrapLengthInput.Value;
     public IReadOnlyList<decimal> DialSeconds => dialInputs.Select(input => input.Value).ToArray();
+    public IReadOnlyList<int> IntervalTimerLanes => intervalTimerChecks
+        .Select((check, index) => (check, lane: index + 1))
+        .Where(item => item.check.Checked)
+        .Select(item => item.lane)
+        .ToArray();
     public bool ExportTournamentJson => exportJsonCheck.Checked;
     public bool ExportTournamentCsv => exportCsvCheck.Checked;
 
@@ -181,14 +188,14 @@ public sealed class RaceSettingsForm : Form
         return tab;
     }
 
-    private TabPage CreateTrackTab()
+    private TabPage CreateTrackTab(IReadOnlyCollection<int> intervalTimerLanes)
     {
         var tab = new TabPage("Track");
         var layout = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
             ColumnCount = 3,
-            RowCount = 3,
+            RowCount = 6,
             Padding = new Padding(14)
         };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
@@ -196,6 +203,17 @@ public sealed class RaceSettingsForm : Form
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         AddSettingRow(layout, 0, "Track length", trackLengthInput, "inches");
         AddSettingRow(layout, 1, "Speed trap length", speedTrapLengthInput, "inches");
+        for (var lane = 0; lane < PhysicalLaneCount; lane++)
+        {
+            var check = new CheckBox
+            {
+                Text = "Installed",
+                AutoSize = true,
+                Checked = intervalTimerLanes.Contains(lane + 1)
+            };
+            intervalTimerChecks[lane] = check;
+            AddSettingRow(layout, lane + 2, $"Lane {lane + 1} interval timers", check);
+        }
         tab.Controls.Add(layout);
         return tab;
     }

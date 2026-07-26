@@ -5,10 +5,10 @@ namespace {
 
 constexpr uint8_t MAX_LANE_COUNT = 4;
 constexpr uint8_t LIGHTS_PER_LANE = 7;
-constexpr uint8_t SENSORS_PER_LANE = 4;
+constexpr uint8_t SENSORS_PER_LANE = 6;
 constexpr char FIRMWARE_NAME[] = "DRAG_MC";
-constexpr char FIRMWARE_VERSION[] = "0.5.0";
-constexpr uint8_t PROTOCOL_VERSION = 4;
+constexpr char FIRMWARE_VERSION[] = "0.6.0";
+constexpr uint8_t PROTOCOL_VERSION = 5;
 
 enum LightIndex : uint8_t {
   PreStageLight,
@@ -23,12 +23,14 @@ enum LightIndex : uint8_t {
 enum SensorIndex : uint8_t {
   PreStageSensor,
   StageSensor,
+  Split1Sensor,
+  Split2Sensor,
   SpeedTrapSensor,
   FinishSensor
 };
 
 constexpr const char* SENSOR_NAMES[SENSORS_PER_LANE] = {
-    "PRESTAGE", "STAGE", "SPEED_TRAP", "FINISH"};
+    "PRESTAGE", "STAGE", "INTERVAL_1", "INTERVAL_2", "SPEED_TRAP", "FINISH"};
 
 constexpr uint8_t LIGHT_PINS[MAX_LANE_COUNT][LIGHTS_PER_LANE] = {
     {22, 23, 24, 25, 26, 27, 28},
@@ -38,10 +40,10 @@ constexpr uint8_t LIGHT_PINS[MAX_LANE_COUNT][LIGHTS_PER_LANE] = {
 };
 
 constexpr uint8_t SENSOR_PINS[MAX_LANE_COUNT][SENSORS_PER_LANE] = {
-    {A0, A1, A2, A3},
-    {A4, A5, A6, A7},
-    {A8, A9, A10, A11},
-    {A12, A13, A14, A15}
+    {A0, A1, 2, 3, A2, A3},
+    {A4, A5, 4, 5, A6, A7},
+    {A8, A9, 6, 7, A10, A11},
+    {A12, A13, 8, 9, A14, A15}
 };
 
 constexpr unsigned long DEFAULT_TRACK_LENGTH_IN_X1000 = 660000;
@@ -175,6 +177,8 @@ class DebouncedBeamSensor {
 struct LaneRace {
   bool fouled = false;
   bool launched = false;
+  bool crossedSplit1 = false;
+  bool crossedSplit2 = false;
   bool crossedSpeedTrap = false;
   bool finished = false;
   bool elapsedAvailable = false;
@@ -183,6 +187,8 @@ struct LaneRace {
   int32_t reactionUs = 0;
   unsigned long greenAtUs = 0;
   unsigned long launchedAtUs = 0;
+  unsigned long split1AtUs = 0;
+  unsigned long split2AtUs = 0;
   unsigned long speedTrapAtUs = 0;
   unsigned long finishedAtUs = 0;
   unsigned long elapsedUs = 0;
@@ -202,6 +208,7 @@ StagingMode stagingMode = StagingMode::BothBlocked;
 unsigned long stagedDelayMs = DEFAULT_STAGED_DELAY_MS;
 uint8_t activeLaneCount = MAX_LANE_COUNT;
 uint8_t heatLaneMask = 0x0F;
+uint8_t splitLaneMask = 0;
 TreeState treeState = TreeState::WaitingForAllLanes;
 unsigned long stateStartedAtMs = 0;
 unsigned long raceEpochMs = 0;
@@ -218,6 +225,7 @@ uint32_t protocolSequence = 0;
 unsigned long lastHeartbeatAtMs = 0;
 
 void formatHeatLanes(char* destination, const size_t destinationSize);
+void formatSplitLanes(char* destination, const size_t destinationSize);
 const char* treeStateName();
 
 uint8_t calculateChecksum(const char* payload) {
@@ -403,6 +411,10 @@ bool laneParticipates(const uint8_t lane) {
   return laneIsActive(lane) && (heatLaneMask & (1U << lane)) != 0;
 }
 
+bool laneHasSplitSensors(const uint8_t lane) {
+  return (splitLaneMask & (1U << lane)) != 0;
+}
+
 uint8_t defaultHeatLaneMask() {
   return activeLaneCount == 4 ? 0x0F : 0x09;
 }
@@ -521,6 +533,20 @@ void updateSequentialStaging() {
   }
 }
 
+void formatSplitLanes(char* destination, const size_t destinationSize) {
+  destination[0] = '\0';
+  for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
+    if (!laneHasSplitSensors(lane)) continue;
+    char laneText[4];
+    snprintf(laneText, sizeof(laneText), "%s%u",
+             destination[0] == '\0' ? "" : ",", lane + 1);
+    strncat(destination, laneText, destinationSize - strlen(destination) - 1);
+  }
+  if (destination[0] == '\0') {
+    strncat(destination, "NONE", destinationSize - 1);
+  }
+}
+
 bool allLanesHaveResults() {
   for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
     if (!laneParticipates(lane)) continue;
@@ -533,6 +559,8 @@ bool allSensorsAreClear() {
   for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
     if (!laneParticipates(lane)) continue;
     for (uint8_t sensor = 0; sensor < SENSORS_PER_LANE; ++sensor) {
+      if ((sensor == Split1Sensor || sensor == Split2Sensor) &&
+          !laneHasSplitSensors(lane)) continue;
       if (sensors[lane][sensor].isBlocked()) return false;
     }
   }
@@ -720,17 +748,63 @@ void updateLaneRace(const uint8_t lane) {
     result.launched = true;
   }
 
+  if (result.launched && laneHasSplitSensors(lane)) {
+    DebouncedBeamSensor& split1 = sensors[lane][Split1Sensor];
+    if (!result.crossedSplit1 && split1.becameBlocked()) {
+      result.split1AtUs = split1.blockedAtUs();
+      result.crossedSplit1 = true;
+      char message[56];
+      snprintf(
+          message, sizeof(message), "RESULT:LANE:%u:INTERVAL_1_US:%lu",
+          lane + 1, result.split1AtUs - result.launchedAtUs);
+      sendProtocolMessage(message);
+    }
+
+    DebouncedBeamSensor& split2 = sensors[lane][Split2Sensor];
+    if (!result.crossedSplit2 && split2.becameBlocked()) {
+      result.split2AtUs = split2.blockedAtUs();
+      result.crossedSplit2 = true;
+      char message[56];
+      snprintf(
+          message, sizeof(message), "RESULT:LANE:%u:INTERVAL_2_US:%lu",
+          lane + 1, result.split2AtUs - result.launchedAtUs);
+      sendProtocolMessage(message);
+    }
+  }
+
   DebouncedBeamSensor& trap = sensors[lane][SpeedTrapSensor];
   if (!result.crossedSpeedTrap && trap.becameBlocked()) {
     result.speedTrapAtUs = trap.blockedAtUs();
     result.crossedSpeedTrap = true;
     sendLaneEvent(lane, "SPEED_TRAP");
+    if (result.launched) {
+      char message[60];
+      snprintf(
+          message, sizeof(message), "RESULT:LANE:%u:SPEED_TRAP_US:%lu",
+          lane + 1, result.speedTrapAtUs - result.launchedAtUs);
+      sendProtocolMessage(message);
+    }
   }
 
   DebouncedBeamSensor& finish = sensors[lane][FinishSensor];
   if (finish.becameBlocked()) {
     result.finishedAtUs = finish.blockedAtUs();
     result.finished = true;
+    if (laneHasSplitSensors(lane)) {
+      char message[52];
+      if (!result.crossedSplit1) {
+        snprintf(
+            message, sizeof(message),
+            "RESULT:LANE:%u:INTERVAL_1_UNAVAILABLE", lane + 1);
+        sendProtocolMessage(message);
+      }
+      if (!result.crossedSplit2) {
+        snprintf(
+            message, sizeof(message),
+            "RESULT:LANE:%u:INTERVAL_2_UNAVAILABLE", lane + 1);
+        sendProtocolMessage(message);
+      }
+    }
     reportElapsedAndBreakout(lane);
     reportTrapSpeed(lane);
   }
@@ -882,6 +956,11 @@ void sendStatus() {
       treeModeName(), stagedDelayMs, stagingModeName());
   sendProtocolMessage(message);
 
+  char splitLanes[10];
+  formatSplitLanes(splitLanes, sizeof(splitLanes));
+  snprintf(message, sizeof(message), "STATUS:INTERVAL_LANES:%s", splitLanes);
+  sendProtocolMessage(message);
+
   for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
     snprintf(
         message, sizeof(message),
@@ -895,6 +974,14 @@ void sendStatus() {
         lanes[lane].fouled ? 1 : 0,
         lanes[lane].finished ? 1 : 0);
     sendProtocolMessage(message);
+    snprintf(
+        message, sizeof(message),
+        "STATUS:INTERVALS:LANE:%u:ENABLED:%u:INTERVAL_1:%u:INTERVAL_2:%u",
+        lane + 1,
+        laneHasSplitSensors(lane) ? 1 : 0,
+        sensors[lane][Split1Sensor].isBlocked() ? 1 : 0,
+        sensors[lane][Split2Sensor].isBlocked() ? 1 : 0);
+    sendProtocolMessage(message);
   }
 }
 
@@ -902,6 +989,8 @@ void sendSensorDiagnostics() {
   char message[132];
   for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
     for (uint8_t sensor = 0; sensor < SENSORS_PER_LANE; ++sensor) {
+      if ((sensor == Split1Sensor || sensor == Split2Sensor) &&
+          !laneHasSplitSensors(lane)) continue;
       const DebouncedBeamSensor& beam = sensors[lane][sensor];
       if (beam.hasCompletedRawPulse()) {
         snprintf(
@@ -1077,6 +1166,36 @@ void processSetCommand(char* line) {
     char message[36];
     formatHeatLanes(heatLanes, sizeof(heatLanes));
     snprintf(message, sizeof(message), "ACK:SET:HEAT_LANES:%s", heatLanes);
+    sendProtocolMessage(message);
+    return;
+  }
+
+  if (strcmp(setting, "INTERVAL_LANES") == 0 && value2 == nullptr) {
+    uint8_t requestedMask = 0;
+    if (strcmp(value1, "NONE") != 0) {
+      char* laneSavePointer = nullptr;
+      char* laneText = strtok_r(value1, ",", &laneSavePointer);
+      while (laneText != nullptr) {
+        const unsigned long laneNumber = strtoul(laneText, nullptr, 10);
+        if (laneNumber < 1 || laneNumber > MAX_LANE_COUNT ||
+            (requestedMask & (1U << (laneNumber - 1))) != 0) {
+          sendProtocolMessage("ERROR:VALUE:INTERVAL_LANES");
+          return;
+        }
+        requestedMask |= 1U << (laneNumber - 1);
+        laneText = strtok_r(nullptr, ",", &laneSavePointer);
+      }
+      if (requestedMask == 0) {
+        sendProtocolMessage("ERROR:VALUE:INTERVAL_LANES");
+        return;
+      }
+    }
+
+    splitLaneMask = requestedMask;
+    char splitLanes[10];
+    char message[40];
+    formatSplitLanes(splitLanes, sizeof(splitLanes));
+    snprintf(message, sizeof(message), "ACK:SET:INTERVAL_LANES:%s", splitLanes);
     sendProtocolMessage(message);
     return;
   }

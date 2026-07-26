@@ -6,7 +6,8 @@ public static class DemoHeatSimulator
 
     public static IReadOnlyList<ProtocolMessage> CreateBracketHeatMessages(
         HeatPlan heat,
-        int? randomSeed = null)
+        int? randomSeed = null,
+        IReadOnlyCollection<int>? splitSensorLanes = null)
     {
         ArgumentNullException.ThrowIfNull(heat);
 
@@ -44,6 +45,7 @@ public static class DemoHeatSimulator
                      .Where(result => !result.Fouled)
                      .OrderBy(result => result.FinishOffsetUs))
         {
+            AddSplitMessages(messages, result, splitSensorLanes);
             messages.Add(ProtocolMessage.Create(
                 "RESULT",
                 "LANE",
@@ -78,7 +80,8 @@ public static class DemoHeatSimulator
     public static IReadOnlyList<ProtocolMessage> CreatePracticeMessages(
         IReadOnlyDictionary<int, int> dialMillisecondsByLane,
         bool bracketMode,
-        int? randomSeed = null)
+        int? randomSeed = null,
+        IReadOnlyCollection<int>? splitSensorLanes = null)
     {
         ArgumentNullException.ThrowIfNull(dialMillisecondsByLane);
         if (dialMillisecondsByLane.Count == 0)
@@ -139,6 +142,7 @@ public static class DemoHeatSimulator
             .ToArray();
         foreach (var result in finishers)
         {
+            AddSplitMessages(messages, result, splitSensorLanes);
             messages.Add(ProtocolMessage.Create(
                 "RESULT",
                 "LANE",
@@ -258,6 +262,30 @@ public static class DemoHeatSimulator
             ? ProtocolMessage.Create("RESULT", "NO_WINNER")
             : ProtocolMessage.Create(
                 "RESULT", "WINNER", "LANE", ordered[0].Entry.LaneNumber.ToString()));
+    }
+
+    private static void AddSplitMessages(
+        ICollection<ProtocolMessage> messages,
+        DemoLaneResult result,
+        IReadOnlyCollection<int>? splitSensorLanes)
+    {
+        if (splitSensorLanes?.Contains(result.Entry.LaneNumber) != true)
+        {
+            return;
+        }
+
+        var split1Us = result.ElapsedUs * 35 / 100;
+        var split2Us = result.ElapsedUs * 65 / 100;
+        var speedTrapUs = result.ElapsedUs * 90 / 100;
+        messages.Add(ProtocolMessage.Create(
+            "RESULT", "LANE", result.Entry.LaneNumber.ToString(),
+            "INTERVAL_1_US", split1Us.ToString()));
+        messages.Add(ProtocolMessage.Create(
+            "RESULT", "LANE", result.Entry.LaneNumber.ToString(),
+            "INTERVAL_2_US", split2Us.ToString()));
+        messages.Add(ProtocolMessage.Create(
+            "RESULT", "LANE", result.Entry.LaneNumber.ToString(),
+            "SPEED_TRAP_US", speedTrapUs.ToString()));
     }
 
     private sealed record DemoLaneResult(

@@ -22,8 +22,8 @@
   speed calculation. The overall track length is currently metadata only.
 - During lane 1 bring-up, select only lane 1 as a heat participant and install
   10k pulldowns on disconnected active-HIGH inputs that are being monitored.
-- Reserve Mega D2-D9 as the tentative eight-input map for two future split
-  sensors per lane, pending confirmation of their locations and purpose.
+- Physically install and validate the optional interval-timer pairs on D2-D9.
+  Compare moving-car edge counts and pulse widths before relying on the times.
 
 ## Venue rule decisions
 
@@ -40,27 +40,9 @@
   fewer than two cars receive controller placements. DNFs are intentionally
   unplaced because the current sensor set cannot order them defensibly.
 
-## Intermediate track sensors
+## Interval timers
 
-- Investigate the two intermediate sensors expected on the local track and
-  compare notes with the 4-lane slot car drag-strip setup in England.
-- Likely future per-lane sensor model:
-  - Pre-stage
-  - Stage
-  - Split/intermediate 1
-  - Split/intermediate 2
-  - Speed trap
-  - Finish
-- Treat intermediate sensors as optional split/diagnostic timing points at
-  first. Do not make them required for staging, starting, winner calculation,
-  or bracket advancement until the venue's exact use is understood.
-- If implemented for all four lanes, sensor count rises from 16 to 24. The Mega
-  2560 has enough pins, but the sensor pin map will need to expand beyond
-  `A0`-`A15`.
-- Possible protocol shape:
-  - `EVENT:LANE:<n>:SPLIT_1`
-  - `EVENT:LANE:<n>:SPLIT_2`
-- Possible Windows display/reporting:
-  - split times from launch or green
-  - diagnostic missed-sensor visibility
-  - richer race reports
+- Confirm the physical locations of Interval 1 and Interval 2 for each lane
+  and record their distances from stage for later speed/acceleration analysis.
+- Reassess Mega SRAM after physical testing. Firmware with all 24 debounced
+  diagnostic inputs currently uses about 82% of the Mega's 8 KB SRAM.

@@ -28,7 +28,7 @@ GitHub at `https://github.com/tekrantz57/Drag`.
 - `HARDWARE.md`: controller, sensor polarity, wiring, pin maps, and hardware
   field notes.
 - `dragWin/PROTOCOL.md`: serial protocol reference.
-- `TODO.md`: future intermediate/split sensor ideas.
+- `TODO.md`: field validation and follow-up engineering work.
 
 ## Current Hardware Assumptions
 
@@ -38,11 +38,14 @@ GitHub at `https://github.com/tekrantz57/Drag`.
   - blocked beam reads `HIGH`
   - clear beam reads `LOW`
 - Firmware has `SENSOR_IS_ACTIVE_LOW = false`.
-- Current sensor map:
-  - Lane 1: A0 pre-stage, A1 stage, A2 speed trap, A3 finish
-  - Lane 2: A4, A5, A6, A7
-  - Lane 3: A8, A9, A10, A11
-  - Lane 4: A12, A13, A14, A15
+- Current six-input sensor map:
+  - Lane 1: A0 pre-stage, A1 stage, D2 Interval 1, D3 Interval 2, A2 speed trap, A3 finish
+  - Lane 2: A4, A5, D4, D5, A6, A7
+  - Lane 3: A8, A9, D6, D7, A10, A11
+  - Lane 4: A12, A13, D8, D9, A14, A15
+- The two interval timers are optional per lane and default to not installed.
+  Disabled interval inputs are ignored by race readiness and diagnostics, so
+  unwired pins cannot prevent a race from starting.
 - Unwired active-HIGH Mega inputs float, so disconnected pins can randomly show
   blocked.
 - Planned sensor wiring assumes Ethernet twisted pair:
@@ -73,13 +76,17 @@ GitHub at `https://github.com/tekrantz57/Drag`.
 - The cardboard passes validate the lane 1 wiring, sensors, controller, serial
   protocol, and Windows pass workflow. Moving-car pulse-width validation is
   still pending until the optical path is raised into the guide flag's reach.
-- The venue will probably add two intermediate/split sensors to each lane,
-  increasing the likely future model from 4 sensors per lane to 6.
+- The software and firmware now support two optional interval timers between
+  stage and the speed trap in each lane. Physical installation and moving-car
+  validation are still pending.
 
 ## Current Software Features
 
 - Firmware supports heads-up and bracket racing.
 - Firmware supports Full and Pro Tree timing, plus a configurable staged delay.
+- Firmware supports two optional interval timers per lane. Interval 1,
+  Interval 2, and speed-trap crossing times are cumulative from launch; the
+  app and exported reports also calculate the three segment times.
 - Controller-issued placements are authoritative for close finishes and
   four-lane advancement; negative reaction times are reported before fouls.
 - Active lane count can be 2 or 4; 2-lane mode uses physical lanes 1 and 4.
@@ -94,8 +101,9 @@ GitHub at `https://github.com/tekrantz57/Drag`.
   - ordered lane choice after round one
   - local SQLite tournament storage
   - tournament reports
-  - Sensor Test window that displays all four sensors for all four lanes,
-    including raw blocked-edge counts and last blocked-pulse widths
+  - Sensor Test window that displays all required sensors and enabled interval
+    timers for all four lanes, including raw blocked-edge counts and last
+    blocked-pulse widths
 - Sensor Test polls current state but obtains edge counts and pulse widths from
   firmware-maintained diagnostics, so short pulses do not need to coincide
   with a Windows polling request to appear in the diagnostic display.
@@ -112,9 +120,9 @@ dotnet run --project dragWin\dragWin.ProtocolTests\dragWin.ProtocolTests.csproj
 Both passed after documentation work. The solution build may report the known
 SQLite RID warning (`NETSDK1206`) for the test project.
 
-An Arduino Mega compile had previously passed before the repo rename and docs
-work. No firmware code has changed since the sensor test/polarity work, but a
-fresh Mega compile on the new computer is still a good first check.
+The interval-timer firmware compiles for the Arduino Mega 2560. The current
+build uses about 82% of SRAM, leaving about 1.4 KB; reassess memory use after
+physical 24-sensor testing or before adding more controller features.
 
 ## Good First Checks on the New Computer
 
@@ -133,6 +141,7 @@ fresh Mega compile on the new computer is still a good first check.
   per-sensor cable breakout, or another wiring harness.
 - Verify whether James Cleave's 330 ohm resistor mod applies to the exact
   sensor boards being used.
-- Continue investigating possible two intermediate/split sensors per lane.
-- If split sensors are added for all four lanes, sensor count rises from 16 to
-  24 and the pin map must expand beyond `A0`-`A15`.
+- Install and validate Interval 1 and Interval 2 at their final physical
+  positions. Confirm cumulative and segment times with a moving car.
+- Reassess Mega SRAM headroom and serial queue behavior with all 24 sensors
+  enabled and producing diagnostics.

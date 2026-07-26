@@ -23,7 +23,7 @@ public sealed record TournamentReportExportOptions(
 
 public static class TournamentReportArchiveWriter
 {
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 2;
 
     private static readonly UTF8Encoding Utf8NoBom = new(false);
 
@@ -79,7 +79,10 @@ public static class TournamentReportArchiveWriter
             "TournamentId", "TournamentName", "Status", "TournamentCreatedUtc", "LaneCount",
             "Round", "Heat", "Lane", "LaneChoiceOrder", "Racer", "Car", "DialMilliseconds",
             "IsBye", "Legality", "FinishOrder", "ReactionMicroseconds", "BreakoutMicroseconds",
-            "Advanced", "ConfirmedUtc");
+            "ElapsedMicroseconds", "SpeedMphX100", "IntervalTimersEnabled",
+            "Interval1Microseconds", "Interval2Microseconds", "SpeedTrapMicroseconds",
+            "Interval1ToInterval2Microseconds", "Interval2ToSpeedTrapMicroseconds",
+            "SpeedTrapToFinishMicroseconds", "Advanced", "ConfirmedUtc");
         foreach (var row in report.Rows.OrderBy(row => row.RoundNumber)
                      .ThenBy(row => row.HeatNumber)
                      .ThenBy(row => row.LaneNumber))
@@ -102,6 +105,15 @@ public static class TournamentReportArchiveWriter
                 row.FinishOrder == int.MaxValue ? null : row.FinishOrder,
                 row.ReactionMicroseconds,
                 row.BreakoutMicroseconds,
+                row.ElapsedMicroseconds,
+                row.SpeedMphX100,
+                row.IntervalTimersEnabled,
+                row.Interval1Microseconds,
+                row.Interval2Microseconds,
+                row.SpeedTrapMicroseconds,
+                row.Interval1ToInterval2Microseconds,
+                row.Interval2ToSpeedTrapMicroseconds,
+                row.SpeedTrapToFinishMicroseconds,
                 row.Advanced,
                 row.ConfirmedAt?.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture));
         }

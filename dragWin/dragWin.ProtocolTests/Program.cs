@@ -51,6 +51,7 @@ try
         SpeedTrapLengthInches = 66M,
         DialSeconds = [7.1M, 7.2M, 7.3M, 7.4M],
         PracticeLanes = [1, 4],
+        IntervalTimerLanes = [1, 4],
         ExportTournamentJson = false,
         ExportTournamentCsv = true
     }, settingsPath);
@@ -61,6 +62,7 @@ try
     AssertEqual(0.750M, loadedSettings.StagedDelaySeconds);
     AssertEqual(7.4M, loadedSettings.DialSeconds[3]);
     AssertEqual(4, loadedSettings.PracticeLanes[1]);
+    AssertEqual(4, loadedSettings.IntervalTimerLanes[1]);
     AssertEqual(false, loadedSettings.ExportTournamentJson);
     AssertEqual(true, loadedSettings.ExportTournamentCsv);
 }
@@ -84,6 +86,11 @@ Assert(
     "A sensor diagnostic should round-trip.");
 AssertEqual("SPEED_TRAP", sensorDiagnosticMessage!.Parts[2]);
 AssertEqual("7", sensorDiagnosticMessage.Parts[6]);
+var intervalMessage = ProtocolMessage.Create(
+    "RESULT", "LANE", "1", "INTERVAL_1_US", "3450000").Encode();
+Assert(ProtocolMessage.TryParse(intervalMessage, out var parsedInterval, out _),
+    "An interval-timer result should round-trip.");
+AssertEqual("INTERVAL_1_US", parsedInterval!.Parts[3]);
 AssertEqual(
     "RESET_SENSOR_DIAGNOSTICS:17",
     ProtocolMessage.Create("RESET_SENSOR_DIAGNOSTICS").Encode());
@@ -166,7 +173,8 @@ var byeAdvancer = planner.SelectAdvancers(
     byeHeat,
     [new RunResult(1, RunLegality.RedLight, 1, -5000, null, true)]);
 AssertEqual(1L, byeAdvancer.Single().CarId);
-var demoMessages = DemoHeatSimulator.CreateBracketHeatMessages(competitiveHeat, randomSeed: 7);
+var demoMessages = DemoHeatSimulator.CreateBracketHeatMessages(
+    competitiveHeat, randomSeed: 7, splitSensorLanes: [1]);
 Assert(
     demoMessages.Any(item => item.Type == "EVENT" && item.Parts[1] == "TREE" && item.Parts[2] == "RACE_COMPLETE"),
     "A demo heat should complete the tree.");
@@ -179,6 +187,9 @@ AssertEqual(
 Assert(
     demoMessages.Any(item => item.Type == "RESULT" && item.Parts.Count > 3 && item.Parts[3] == "SPEED_MPH_X100"),
     "A demo heat should include speed-trap output.");
+Assert(
+    demoMessages.Any(item => item.Type == "RESULT" && item.Parts.Count > 3 && item.Parts[3] == "INTERVAL_1_US"),
+    "A demo heat should include enabled interval timers.");
 var demoByeMessages = DemoHeatSimulator.CreateBracketHeatMessages(byeHeat, randomSeed: 7);
 Assert(
     demoByeMessages.Any(item => item.Type == "EVENT" && item.Parts.Count > 3 && item.Parts[3] == "REACTION_US"),
@@ -237,6 +248,7 @@ var databasePath = Path.Combine(
     Path.GetTempPath(),
     $"dragWin-tests-{Guid.NewGuid():N}.db");
 var backupPath = databasePath + ".backup.db";
+var legacyBackupPath = databasePath + ".v3-backup.db";
 var safetyBackupPath = databasePath + ".before-restore.db";
 var automaticBackupDirectory = databasePath + ".automatic";
 var reportExportDirectory = databasePath + ".reports";
@@ -266,7 +278,13 @@ try
     AssertEqual(8100, persistedHeat.Entries.Single().DialMilliseconds);
     AssertEqual(7600, persistedHeat.Entries.Single().Car.DefaultDialMilliseconds);
     var persistedResult = new RunResult(
-        car.Id, RunLegality.RedLight, 1, -1000, null, true);
+        car.Id, RunLegality.RedLight, 1, -1000, null, true,
+        ElapsedMicroseconds: 7_600_000,
+        SpeedMphX100: 2_150,
+        IntervalTimersEnabled: true,
+        Interval1Microseconds: 2_500_000,
+        Interval2Microseconds: 5_000_000,
+        SpeedTrapMicroseconds: 7_000_000);
     repository.SaveHeatResults(
         tournament.Id,
         1,
@@ -285,6 +303,14 @@ try
     AssertEqual(1, report.Rows.Count);
     AssertEqual("RedLight", report.Rows.Single().Legality?.ToString());
     Assert(report.Rows.Single().Advanced, "The report should mark the advancing car.");
+    AssertEqual(2_500_000L, report.Rows.Single().Interval1Microseconds);
+    AssertEqual(5_000_000L, report.Rows.Single().Interval2Microseconds);
+    AssertEqual(7_000_000L, report.Rows.Single().SpeedTrapMicroseconds);
+    AssertEqual(2_500_000L, report.Rows.Single().Interval1ToInterval2Microseconds);
+    AssertEqual(2_000_000L, report.Rows.Single().Interval2ToSpeedTrapMicroseconds);
+    AssertEqual(600_000L, report.Rows.Single().SpeedTrapToFinishMicroseconds);
+    Assert(report.Rows.Single().IntervalTimersEnabled,
+        "The report should retain the interval-timer configuration used for the run.");
 
     var reportExports = TournamentReportArchiveWriter.Write(report, reportExportDirectory);
     Assert(File.Exists(reportExports.Html), "The HTML tournament report should be exported.");
@@ -301,10 +327,18 @@ try
                 .GetProperty("tournament")
                 .GetProperty("name")
                 .GetString());
+        AssertEqual(
+            2_500_000L,
+            archive.RootElement.GetProperty("tournamentReport")
+                .GetProperty("rows")[0]
+                .GetProperty("interval1ToInterval2Microseconds")
+                .GetInt64());
     }
     var csvText = File.ReadAllText(reportExports.Csv!);
     Assert(csvText.Contains("ReactionMicroseconds", StringComparison.Ordinal),
         "The CSV should include stable result headers.");
+    Assert(csvText.Contains("Interval1Microseconds", StringComparison.Ordinal),
+        "The CSV should include interval-timer fields.");
     Assert(csvText.Contains("Test Racer", StringComparison.Ordinal),
         "The CSV should include tournament entrants.");
 
@@ -339,6 +373,20 @@ try
     var safetyRepository = new RaceRepository(safetyBackupPath);
     AssertEqual(0, safetyRepository.GetCars().Count);
 
+    File.Copy(backupPath, legacyBackupPath);
+    using (var versionConnection = new Microsoft.Data.Sqlite.SqliteConnection(
+               $"Data Source={legacyBackupPath};Pooling=False"))
+    {
+        versionConnection.Open();
+        using var versionCommand = versionConnection.CreateCommand();
+        versionCommand.CommandText = "PRAGMA user_version = 3;";
+        versionCommand.ExecuteNonQuery();
+    }
+    repository.RetireCar(car.Id);
+    var legacyRestore = repository.RestoreBackup(legacyBackupPath, safetyBackupPath);
+    AssertEqual(legacyBackupPath, legacyRestore.RestoredFromPath);
+    AssertEqual("Test Car Updated", repository.GetCars().Single().Name);
+
     Directory.CreateDirectory(automaticBackupDirectory);
     File.Copy(backupPath, Path.Combine(automaticBackupDirectory, "dragWin-auto-20000101.db"));
     File.Copy(backupPath, Path.Combine(automaticBackupDirectory, "dragWin-auto-20000102.db"));
@@ -356,13 +404,13 @@ try
     {
         versionConnection.Open();
         using var versionCommand = versionConnection.CreateCommand();
-        versionCommand.CommandText = "PRAGMA user_version = 2;";
+        versionCommand.CommandText = "PRAGMA user_version = 3;";
         versionCommand.ExecuteNonQuery();
     }
     _ = new RaceRepository(databasePath, automaticBackupDirectory);
     Assert(Directory.EnumerateFiles(
             automaticBackupDirectory,
-            "dragWin-before-schema-v2-to-v3-*.db").Any(),
+            "dragWin-before-schema-v3-to-v4-*.db").Any(),
         "A pre-migration safety backup should be created.");
 }
 finally
@@ -373,6 +421,9 @@ finally
     File.Delete(backupPath);
     File.Delete(backupPath + "-shm");
     File.Delete(backupPath + "-wal");
+    File.Delete(legacyBackupPath);
+    File.Delete(legacyBackupPath + "-shm");
+    File.Delete(legacyBackupPath + "-wal");
     File.Delete(safetyBackupPath);
     File.Delete(safetyBackupPath + "-shm");
     File.Delete(safetyBackupPath + "-wal");

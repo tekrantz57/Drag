@@ -46,7 +46,13 @@ public sealed record RunResult(
     int FinishOrder,
     long? ReactionMicroseconds,
     long? BreakoutMicroseconds,
-    bool IsBye);
+    bool IsBye,
+    long? ElapsedMicroseconds = null,
+    long? SpeedMphX100 = null,
+    bool IntervalTimersEnabled = false,
+    long? Interval1Microseconds = null,
+    long? Interval2Microseconds = null,
+    long? SpeedTrapMicroseconds = null);
 
 public sealed record TournamentReport(
     Tournament Tournament,
@@ -75,4 +81,23 @@ public sealed record TournamentReportRow(
     long? ReactionMicroseconds,
     long? BreakoutMicroseconds,
     bool Advanced,
-    DateTimeOffset? ConfirmedAt);
+    DateTimeOffset? ConfirmedAt,
+    long? ElapsedMicroseconds = null,
+    long? SpeedMphX100 = null,
+    bool IntervalTimersEnabled = false,
+    long? Interval1Microseconds = null,
+    long? Interval2Microseconds = null,
+    long? SpeedTrapMicroseconds = null)
+{
+    public long? Interval1ToInterval2Microseconds =>
+        Segment(Interval1Microseconds, Interval2Microseconds);
+
+    public long? Interval2ToSpeedTrapMicroseconds =>
+        Segment(Interval2Microseconds, SpeedTrapMicroseconds);
+
+    public long? SpeedTrapToFinishMicroseconds =>
+        Segment(SpeedTrapMicroseconds, ElapsedMicroseconds);
+
+    private static long? Segment(long? start, long? end) =>
+        start.HasValue && end.HasValue && end >= start ? end - start : null;
+}

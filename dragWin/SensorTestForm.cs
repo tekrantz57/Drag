@@ -3,15 +3,15 @@ namespace DragWin;
 public sealed class SensorTestForm : Form
 {
     private const int LaneCount = 4;
-    private const int SensorCount = 4;
-    private static readonly string[] SensorNames = ["Pre-Stage", "Stage", "Speed Trap", "Finish"];
-    private static readonly string[] SensorProtocolNames = ["PRESTAGE", "STAGE", "SPEED_TRAP", "FINISH"];
+    private const int SensorCount = 6;
+    private static readonly string[] SensorNames = ["Pre-Stage", "Stage", "Interval 1", "Interval 2", "Speed Trap", "Finish"];
+    private static readonly string[] SensorProtocolNames = ["PRESTAGE", "STAGE", "INTERVAL_1", "INTERVAL_2", "SPEED_TRAP", "FINISH"];
     private static readonly string[,] SensorPins =
     {
-        { "A0", "A1", "A2", "A3" },
-        { "A4", "A5", "A6", "A7" },
-        { "A8", "A9", "A10", "A11" },
-        { "A12", "A13", "A14", "A15" }
+        { "A0", "A1", "D2", "D3", "A2", "A3" },
+        { "A4", "A5", "D4", "D5", "A6", "A7" },
+        { "A8", "A9", "D6", "D7", "A10", "A11" },
+        { "A12", "A13", "D8", "D9", "A14", "A15" }
     };
 
     private readonly DragSerialClient client;
@@ -41,8 +41,8 @@ public sealed class SensorTestForm : Form
 
         Text = "Sensor Test";
         StartPosition = FormStartPosition.CenterParent;
-        MinimumSize = new Size(900, 520);
-        Size = new Size(980, 560);
+        MinimumSize = new Size(1100, 520);
+        Size = new Size(1250, 600);
 
         Controls.Add(CreateLayout());
 
@@ -117,7 +117,7 @@ public sealed class SensorTestForm : Form
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 80));
         for (var column = 0; column < SensorCount; column++)
         {
-            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
+            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F / SensorCount));
         }
 
         grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
@@ -216,6 +216,26 @@ public sealed class SensorTestForm : Form
             return;
         }
 
+        if (message.Type == "STATUS" && message.Parts.Count >= 6 &&
+            message.Parts[1] == "INTERVALS" && message.Parts[2] == "LANE" &&
+            int.TryParse(message.Parts[3], out var splitLaneNumber) &&
+            splitLaneNumber is >= 1 and <= LaneCount)
+        {
+            var splitFields = ParseFields(message, 4);
+            var laneIndex = splitLaneNumber - 1;
+            if (splitFields.GetValueOrDefault("ENABLED") == "1")
+            {
+                UpdateSensorState(splitFields, laneIndex, "INTERVAL_1", 2);
+                UpdateSensorState(splitFields, laneIndex, "INTERVAL_2", 3);
+            }
+            else
+            {
+                SetSensorNotInstalled(laneIndex, 2);
+                SetSensorNotInstalled(laneIndex, 3);
+            }
+            return;
+        }
+
         if (message.Type != "STATUS" ||
             message.Parts.Count < 4 ||
             message.Parts[1] != "LANE" ||
@@ -228,8 +248,8 @@ public sealed class SensorTestForm : Form
         var fields = ParseFields(message);
         UpdateSensorState(fields, laneNumber - 1, "PRESTAGE", 0);
         UpdateSensorState(fields, laneNumber - 1, "STAGE", 1);
-        UpdateSensorState(fields, laneNumber - 1, "SPEED_TRAP", 2);
-        UpdateSensorState(fields, laneNumber - 1, "FINISH", 3);
+        UpdateSensorState(fields, laneNumber - 1, "SPEED_TRAP", 4);
+        UpdateSensorState(fields, laneNumber - 1, "FINISH", 5);
         statusLabel.Text = $"Last sensor update {DateTime.Now:T}";
     }
 
@@ -273,6 +293,16 @@ public sealed class SensorTestForm : Form
 
         RefreshSensorLabel(laneIndex, sensorIndex);
         statusLabel.Text = $"Last diagnostic update {DateTime.Now:T}";
+    }
+
+    private void SetSensorNotInstalled(int laneIndex, int sensorIndex)
+    {
+        blockedStates[laneIndex, sensorIndex] = null;
+        rawBlockedStates[laneIndex, sensorIndex] = null;
+        var label = stateLabels[laneIndex, sensorIndex];
+        label.Text = $"{SensorPins[laneIndex, sensorIndex]}\r\nNot installed";
+        label.BackColor = Color.FromArgb(235, 235, 235);
+        label.ForeColor = Color.FromArgb(90, 90, 90);
     }
 
     private static Dictionary<string, string> ParseFields(

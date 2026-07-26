@@ -144,7 +144,7 @@ public static class TournamentReportWriter
 
                 builder.AppendLine("<table>");
                 builder.AppendLine(
-                    "<thead><tr><th>Lane</th><th>Racer</th><th>Car</th><th>Dial</th><th>Legality</th><th>Finish</th><th>Reaction</th><th>Breakout</th><th>Advanced</th></tr></thead>");
+                    "<thead><tr><th>Lane</th><th>Racer</th><th>Car</th><th>Dial</th><th>Legality</th><th>Finish</th><th>Reaction</th><th>ET</th><th>MPH</th><th>Interval 1</th><th>Interval 2</th><th>I1-I2</th><th>I2-Trap</th><th>Trap-Finish</th><th>Breakout</th><th>Advanced</th></tr></thead>");
                 builder.AppendLine("<tbody>");
                 foreach (var row in heatGroup.OrderBy(row => row.LaneNumber))
                 {
@@ -156,6 +156,13 @@ public static class TournamentReportWriter
                     AddCell(builder, row.Legality?.ToString() ?? "Pending");
                     AddCell(builder, FormatFinish(row.FinishOrder), "number");
                     AddCell(builder, FormatMicroseconds(row.ReactionMicroseconds), "number");
+                    AddCell(builder, FormatMicroseconds(row.ElapsedMicroseconds), "number");
+                    AddCell(builder, FormatSpeed(row.SpeedMphX100), "number");
+                    AddCell(builder, FormatInterval(row.Interval1Microseconds, row.IntervalTimersEnabled), "number");
+                    AddCell(builder, FormatInterval(row.Interval2Microseconds, row.IntervalTimersEnabled), "number");
+                    AddCell(builder, FormatSegment(row.Interval1Microseconds, row.Interval2Microseconds, row.IntervalTimersEnabled), "number");
+                    AddCell(builder, FormatSegment(row.Interval2Microseconds, row.SpeedTrapMicroseconds, row.IntervalTimersEnabled), "number");
+                    AddCell(builder, FormatSegment(row.SpeedTrapMicroseconds, row.ElapsedMicroseconds, row.IntervalTimersEnabled), "number");
                     AddCell(builder, FormatMicroseconds(row.BreakoutMicroseconds), "number");
                     AddCell(builder, row.Advanced ? "Yes" : "");
                     builder.AppendLine("</tr>");
@@ -208,6 +215,18 @@ public static class TournamentReportWriter
         finishOrder.HasValue && finishOrder.Value != int.MaxValue
             ? finishOrder.Value.ToString(CultureInfo.InvariantCulture)
             : "";
+
+    private static string FormatSpeed(long? speedMphX100) => speedMphX100.HasValue
+        ? (speedMphX100.Value / 100.0).ToString("0.00", CultureInfo.CurrentCulture)
+        : "";
+
+    private static string FormatInterval(long? value, bool enabled) =>
+        value.HasValue ? FormatMicroseconds(value) : enabled ? "Missed" : "N/A";
+
+    private static string FormatSegment(long? start, long? end, bool enabled) =>
+        start.HasValue && end.HasValue && end >= start
+            ? FormatMicroseconds(end - start)
+            : enabled ? "" : "N/A";
 
     public static string SafeFileName(string value)
     {
