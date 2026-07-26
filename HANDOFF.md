@@ -101,6 +101,8 @@ GitHub at `https://github.com/tekrantz57/Drag`.
   - ordered lane choice after round one
   - local SQLite tournament storage
   - tournament reports
+  - optional Windows SAPI announcements for lineups, lane choices, advancing
+    cars, tournament results, and practice results
   - Sensor Test window that displays all required sensors and enabled interval
     timers for all four lanes, including raw blocked-edge counts and last
     blocked-pulse widths

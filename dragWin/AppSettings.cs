@@ -14,6 +14,8 @@ public sealed class AppSettings
     public decimal[] DialSeconds { get; set; } = [10.000M, 10.000M, 10.000M, 10.000M];
     public int[] PracticeLanes { get; set; } = [1, 2, 3, 4];
     public int[] IntervalTimerLanes { get; set; } = [];
+    public bool VoiceAnnouncementsEnabled { get; set; }
+    public string SpeechVoiceName { get; set; } = "";
     public bool ExportTournamentJson { get; set; } = true;
     public bool ExportTournamentCsv { get; set; } = true;
 }
@@ -94,6 +96,7 @@ public static class AppSettingsStore
             .Distinct()
             .Order()
             .ToArray();
+        settings.SpeechVoiceName = settings.SpeechVoiceName?.Trim() ?? "";
         return settings;
     }
 }

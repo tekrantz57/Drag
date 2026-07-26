@@ -52,6 +52,8 @@ try
         DialSeconds = [7.1M, 7.2M, 7.3M, 7.4M],
         PracticeLanes = [1, 4],
         IntervalTimerLanes = [1, 4],
+        VoiceAnnouncementsEnabled = true,
+        SpeechVoiceName = "Test Voice",
         ExportTournamentJson = false,
         ExportTournamentCsv = true
     }, settingsPath);
@@ -63,6 +65,8 @@ try
     AssertEqual(7.4M, loadedSettings.DialSeconds[3]);
     AssertEqual(4, loadedSettings.PracticeLanes[1]);
     AssertEqual(4, loadedSettings.IntervalTimerLanes[1]);
+    AssertEqual(true, loadedSettings.VoiceAnnouncementsEnabled);
+    AssertEqual("Test Voice", loadedSettings.SpeechVoiceName);
     AssertEqual(false, loadedSettings.ExportTournamentJson);
     AssertEqual(true, loadedSettings.ExportTournamentCsv);
 }
@@ -143,6 +147,26 @@ var competitiveHeat = new HeatPlan(
         .Select((car, index) => new RoundEntry(
             car, index + 1, index + 1, false, car.DefaultDialMilliseconds))
         .ToArray());
+var lineupAnnouncement = RaceAnnouncementText.HeatLineup(2, competitiveHeat);
+Assert(lineupAnnouncement.Contains("Round 2, heat 1. 2 cars advance.", StringComparison.Ordinal),
+    "The lineup announcement should identify the round, heat, and advancement count.");
+Assert(lineupAnnouncement.Contains("Lane 1, Owner A, driving A1", StringComparison.Ordinal),
+    "The lineup announcement should identify the lane, racer, and car.");
+AssertEqual(
+    "Owner A, driving A1 has selected lane 3.",
+    RaceAnnouncementText.LaneChoiceConfirmed(cars[0], 3));
+AssertEqual(
+    "Heat complete. Advancing: Owner A, driving A1 and Owner B, driving B1.",
+    RaceAnnouncementText.HeatComplete([cars[0], cars[2]]));
+AssertEqual(
+    "Tournament complete. Champion, Owner A, driving A1. Runner-up, Owner A, driving A2.",
+    RaceAnnouncementText.TournamentComplete(cars[0], cars[1]));
+AssertEqual(
+    "Practice pass complete. Lane 1, elapsed time 7.432 seconds, 21.50 miles per hour. Lane 4, red light.",
+    RaceAnnouncementText.PracticeComplete([
+        new PracticeAnnouncementResult(1, 7_432_000, 2_150, false, false, false),
+        new PracticeAnnouncementResult(4, null, null, true, false, false)
+    ]));
 var advancers = planner.SelectAdvancers(
     competitiveHeat,
     [

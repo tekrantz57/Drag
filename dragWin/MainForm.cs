@@ -186,6 +186,10 @@ public sealed class MainForm : Form
         stagingModeSelector.Enabled = true;
         InitializeDialInputs();
         LoadPersistedSettingsIntoControls();
+        if (persistedSettings.VoiceAnnouncementsEnabled)
+        {
+            SpeechAnnouncer.WarmUpAsync(persistedSettings.SpeechVoiceName);
+        }
         UiStyles.ConfigurePrimaryButton(startPracticeButton, UiStyles.BlueAction);
         UiStyles.ConfigurePrimaryButton(runTournamentButton, UiStyles.GreenAction);
         connectButton.UseVisualStyleBackColor = false;
@@ -810,6 +814,8 @@ public sealed class MainForm : Form
             decimal.ToInt32(stagedDelayInput.Value * 1000M),
             stagingModeSelector.SelectedItem as string ?? "BOTH_BLOCKED",
             persistedSettings.IntervalTimerLanes,
+            persistedSettings.VoiceAnnouncementsEnabled,
+            persistedSettings.SpeechVoiceName,
             new TournamentReportExportOptions(
                 persistedSettings.ExportTournamentJson,
                 persistedSettings.ExportTournamentCsv)).ShowDialog(this);
@@ -977,7 +983,10 @@ public sealed class MainForm : Form
     {
         if (passResultsForm is null || passResultsForm.IsDisposed)
         {
-            passResultsForm = new PassResultsForm(client);
+            passResultsForm = new PassResultsForm(
+                client,
+                persistedSettings.VoiceAnnouncementsEnabled,
+                persistedSettings.SpeechVoiceName);
             passResultsForm.FormClosed += (_, _) => passResultsForm = null;
             passResultsForm.Show(this);
         }
@@ -986,6 +995,9 @@ public sealed class MainForm : Form
             passResultsForm.BringToFront();
         }
 
+        passResultsForm.UpdateAnnouncementSettings(
+            persistedSettings.VoiceAnnouncementsEnabled,
+            persistedSettings.SpeechVoiceName);
         passResultsForm.BeginPass(lanes, persistedSettings.IntervalTimerLanes);
         return passResultsForm;
     }
@@ -1105,6 +1117,8 @@ public sealed class MainForm : Form
             trackLengthInput.Value,
             speedTrapLengthInput.Value,
             persistedSettings.IntervalTimerLanes,
+            persistedSettings.VoiceAnnouncementsEnabled,
+            persistedSettings.SpeechVoiceName,
             persistedSettings.ExportTournamentJson,
             persistedSettings.ExportTournamentCsv,
             client.IsConnected);
@@ -1123,6 +1137,8 @@ public sealed class MainForm : Form
         persistedSettings.ExportTournamentJson = dialog.ExportTournamentJson;
         persistedSettings.ExportTournamentCsv = dialog.ExportTournamentCsv;
         persistedSettings.IntervalTimerLanes = dialog.IntervalTimerLanes.ToArray();
+        persistedSettings.VoiceAnnouncementsEnabled = dialog.VoiceAnnouncementsEnabled;
+        persistedSettings.SpeechVoiceName = dialog.SpeechVoiceName;
         for (var lane = 0; lane < LaneCount; lane++)
         {
             dialInputs[lane].Value = dialog.DialSeconds[lane];
@@ -1130,6 +1146,10 @@ public sealed class MainForm : Form
 
         UpdateDialInputState();
         SaveCurrentSettings();
+        if (persistedSettings.VoiceAnnouncementsEnabled)
+        {
+            SpeechAnnouncer.WarmUpAsync(persistedSettings.SpeechVoiceName);
+        }
         UpdateSettingsSummary();
         AppendLog(
             $"Settings saved: {dialog.LaneCount} lanes, {dialog.RaceMode}, " +
@@ -1555,6 +1575,8 @@ public sealed class MainForm : Form
                 .Select(item => item.lane)
                 .ToArray(),
             IntervalTimerLanes = persistedSettings.IntervalTimerLanes.ToArray(),
+            VoiceAnnouncementsEnabled = persistedSettings.VoiceAnnouncementsEnabled,
+            SpeechVoiceName = persistedSettings.SpeechVoiceName,
             ExportTournamentJson = persistedSettings.ExportTournamentJson,
             ExportTournamentCsv = persistedSettings.ExportTournamentCsv
         };

@@ -33,6 +33,18 @@ public sealed class RaceSettingsForm : Form
     };
     private readonly NumericUpDown[] dialInputs = new NumericUpDown[PhysicalLaneCount];
     private readonly CheckBox[] intervalTimerChecks = new CheckBox[PhysicalLaneCount];
+    private readonly CheckBox voiceAnnouncementsCheck = new() { Text = "Enabled", AutoSize = true };
+    private readonly ComboBox speechVoiceSelector = new()
+    {
+        DropDownStyle = ComboBoxStyle.DropDownList,
+        Dock = DockStyle.Fill
+    };
+    private readonly Button testVoiceButton = new()
+    {
+        Text = "Test Voice",
+        AutoSize = true,
+        MinimumSize = new Size(95, 30)
+    };
     private readonly CheckBox exportJsonCheck = new()
     {
         Text = "Write JSON tournament archive",
@@ -54,6 +66,8 @@ public sealed class RaceSettingsForm : Form
         decimal trackLengthInches,
         decimal speedTrapLengthInches,
         IReadOnlyCollection<int> intervalTimerLanes,
+        bool voiceAnnouncementsEnabled,
+        string speechVoiceName,
         bool exportTournamentJson,
         bool exportTournamentCsv,
         bool controllerConnected)
@@ -79,10 +93,13 @@ public sealed class RaceSettingsForm : Form
         speedTrapLengthInput.Value = Math.Clamp(speedTrapLengthInches, speedTrapLengthInput.Minimum, speedTrapLengthInput.Maximum);
         exportJsonCheck.Checked = exportTournamentJson;
         exportCsvCheck.Checked = exportTournamentCsv;
+        voiceAnnouncementsCheck.Checked = voiceAnnouncementsEnabled;
+        LoadSpeechVoices(speechVoiceName);
 
         var tabs = new TabControl { Dock = DockStyle.Fill };
         tabs.TabPages.Add(CreateRaceTab(dialSeconds));
         tabs.TabPages.Add(CreateTrackTab(intervalTimerLanes));
+        tabs.TabPages.Add(CreateAnnouncementsTab());
         tabs.TabPages.Add(CreateReportsTab());
 
         var saveButton = new Button
@@ -131,8 +148,12 @@ public sealed class RaceSettingsForm : Form
 
         modeSelector.SelectedIndexChanged += (_, _) => UpdateDialState();
         laneCountSelector.SelectedIndexChanged += (_, _) => UpdateDialState();
+        voiceAnnouncementsCheck.CheckedChanged += (_, _) => UpdateVoiceState();
+        testVoiceButton.Click += (_, _) =>
+            SpeechAnnouncer.SpeakAsync("Drag strip announcements are ready.", SpeechVoiceName);
         FormClosing += ValidateBeforeClosing;
         UpdateDialState();
+        UpdateVoiceState();
     }
 
     public string RaceMode => (string)modeSelector.SelectedItem!;
@@ -148,6 +169,10 @@ public sealed class RaceSettingsForm : Form
         .Where(item => item.check.Checked)
         .Select(item => item.lane)
         .ToArray();
+    public bool VoiceAnnouncementsEnabled => voiceAnnouncementsCheck.Checked;
+    public string SpeechVoiceName => speechVoiceSelector.SelectedIndex <= 0
+        ? ""
+        : speechVoiceSelector.SelectedItem?.ToString()?.Trim() ?? "";
     public bool ExportTournamentJson => exportJsonCheck.Checked;
     public bool ExportTournamentCsv => exportCsvCheck.Checked;
 
@@ -232,6 +257,50 @@ public sealed class RaceSettingsForm : Form
         layout.Controls.Add(exportCsvCheck);
         tab.Controls.Add(layout);
         return tab;
+    }
+
+    private TabPage CreateAnnouncementsTab()
+    {
+        var tab = new TabPage("Announcements");
+        var layout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 3,
+            RowCount = 3,
+            Padding = new Padding(14)
+        };
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        AddSettingRow(layout, 0, "Voice announcements", voiceAnnouncementsCheck);
+        AddSettingRow(layout, 1, "Windows voice", speechVoiceSelector);
+        layout.Controls.Add(testVoiceButton, 1, 2);
+        tab.Controls.Add(layout);
+        return tab;
+    }
+
+    private void LoadSpeechVoices(string selectedVoice)
+    {
+        speechVoiceSelector.Items.Clear();
+        speechVoiceSelector.Items.Add("Windows default");
+        foreach (var voiceName in SpeechAnnouncer.GetInstalledVoices())
+        {
+            speechVoiceSelector.Items.Add(voiceName);
+        }
+        if (!string.IsNullOrWhiteSpace(selectedVoice) &&
+            !speechVoiceSelector.Items.Contains(selectedVoice))
+        {
+            speechVoiceSelector.Items.Add(selectedVoice);
+        }
+        speechVoiceSelector.SelectedItem = string.IsNullOrWhiteSpace(selectedVoice)
+            ? "Windows default"
+            : selectedVoice;
+    }
+
+    private void UpdateVoiceState()
+    {
+        speechVoiceSelector.Enabled = voiceAnnouncementsCheck.Checked;
+        testVoiceButton.Enabled = voiceAnnouncementsCheck.Checked;
     }
 
     private static void AddSettingRow(

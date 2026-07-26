@@ -26,11 +26,19 @@ public sealed class PassResultsForm : Form
         Text = "No passes armed"
     };
     private readonly Dictionary<int, PassLaneResult> currentResults = [];
+    private bool voiceAnnouncementsEnabled;
+    private string speechVoiceName;
+    private bool passResultAnnounced;
     private int passNumber;
 
-    public PassResultsForm(DragSerialClient client)
+    public PassResultsForm(
+        DragSerialClient client,
+        bool voiceAnnouncementsEnabled,
+        string speechVoiceName)
     {
         this.client = client;
+        this.voiceAnnouncementsEnabled = voiceAnnouncementsEnabled;
+        this.speechVoiceName = speechVoiceName;
         Text = "Practice Pass Results";
         MinimumSize = new Size(980, 420);
         Size = new Size(1280, 560);
@@ -116,6 +124,7 @@ public sealed class PassResultsForm : Form
 
         MarkIncompleteRows();
         currentResults.Clear();
+        passResultAnnounced = false;
         passNumber++;
         var startedAt = DateTime.Now;
         foreach (var lane in lanes.Order())
@@ -141,6 +150,13 @@ public sealed class PassResultsForm : Form
         }
         sessionSummary.Text =
             $"Pass {passNumber}  |  Lane{(lanes.Count == 1 ? "" : "s")} {string.Join(", ", lanes.Order())}";
+        Speak(RaceAnnouncementText.PracticeArmed(lanes));
+    }
+
+    public void UpdateAnnouncementSettings(bool enabled, string voiceName)
+    {
+        voiceAnnouncementsEnabled = enabled;
+        speechVoiceName = voiceName;
     }
 
     public void ProcessMessages(IEnumerable<ProtocolMessage> messages)
@@ -277,6 +293,18 @@ public sealed class PassResultsForm : Form
                 laneResult.Complete = true;
                 UpdateRow(laneResult);
             }
+            if (!passResultAnnounced)
+            {
+                passResultAnnounced = true;
+                Speak(RaceAnnouncementText.PracticeComplete(currentResults.Select(item =>
+                    new PracticeAnnouncementResult(
+                        item.Key,
+                        item.Value.ElapsedUs,
+                        item.Value.SpeedMphX100,
+                        item.Value.Fouled,
+                        item.Value.BreakoutUs.HasValue,
+                        item.Value.DidNotFinish))));
+            }
         }
         else if (message.Type == "EVENT" && message.Parts.Count >= 3 &&
                  message.Parts[1] == "TREE" && message.Parts[2] == "STAGING_ABORTED")
@@ -286,6 +314,15 @@ public sealed class PassResultsForm : Form
                 laneResult.Row.Cells["Outcome"].Value = "Staging aborted";
                 laneResult.Row.DefaultCellStyle.BackColor = Color.FromArgb(255, 244, 214);
             }
+            Speak("Staging aborted. Please restage.");
+        }
+    }
+
+    private void Speak(string phrase)
+    {
+        if (voiceAnnouncementsEnabled)
+        {
+            SpeechAnnouncer.SpeakAsync(phrase, speechVoiceName);
         }
     }
 

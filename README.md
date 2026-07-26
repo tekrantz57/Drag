@@ -62,6 +62,12 @@ a flat row-per-entrant result file intended for spreadsheets and custom reports.
 Enabled interval timers add cumulative and segment timing to practice results,
 tournament history, HTML reports, JSON archives, and CSV exports.
 
+Optional Windows voice announcements can be enabled under **Configure > Race
+and track settings... > Announcements**. dragWin uses an installed Windows SAPI
+voice to announce tournament lineups, lane choices, cars advancing, final
+results, and practice-pass results. Speech runs independently from controller
+timing and is disabled by default.
+
 Serial logs are written by date under:
 
 ```text

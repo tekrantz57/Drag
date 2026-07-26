@@ -21,6 +21,8 @@ public sealed class TournamentRunnerForm : Form
     private readonly int stagedDelayMilliseconds;
     private readonly string stagingMode;
     private readonly HashSet<int> splitSensorLanes;
+    private readonly bool voiceAnnouncementsEnabled;
+    private readonly string speechVoiceName;
     private readonly TournamentReportExportOptions reportExportOptions;
     private readonly TournamentPlanner planner = new();
     private readonly Label heading = new()
@@ -96,6 +98,7 @@ public sealed class TournamentRunnerForm : Form
     };
     private readonly Button rerunButton = new() { Text = "Re-run Heat", AutoSize = true, Visible = false };
     private readonly Button historyButton = new() { Text = "Race History", AutoSize = true };
+    private readonly Button repeatLineupButton = new() { Text = "Repeat Lineup", AutoSize = true };
     private readonly SplitContainer detailsSplit = new()
     {
         Dock = DockStyle.Fill,
@@ -113,6 +116,9 @@ public sealed class TournamentRunnerForm : Form
     private bool confirmingHeat;
     private bool completionReportShown;
     private bool runnerActionRunning;
+    private bool lineupAnnounced;
+    private bool resultsAnnounced;
+    private long? lastAnnouncedLaneChoiceCarId;
     private DateTimeOffset lastRunnerButtonActionAt;
     private RunnerPhase phase;
 
@@ -123,6 +129,8 @@ public sealed class TournamentRunnerForm : Form
         int stagedDelayMilliseconds,
         string stagingMode,
         IReadOnlyCollection<int> splitSensorLanes,
+        bool voiceAnnouncementsEnabled,
+        string speechVoiceName,
         TournamentReportExportOptions reportExportOptions)
     {
         this.tournament = tournament;
@@ -131,6 +139,8 @@ public sealed class TournamentRunnerForm : Form
         this.stagedDelayMilliseconds = Math.Clamp(stagedDelayMilliseconds, 0, 5000);
         this.stagingMode = stagingMode == "IN_ORDER" ? "IN_ORDER" : "BOTH_BLOCKED";
         this.splitSensorLanes = splitSensorLanes.ToHashSet();
+        this.voiceAnnouncementsEnabled = voiceAnnouncementsEnabled;
+        this.speechVoiceName = speechVoiceName;
         this.reportExportOptions = reportExportOptions;
         Text = $"Run Tournament - {tournament.Name}";
         MinimumSize = new Size(980, 680);
@@ -199,6 +209,8 @@ public sealed class TournamentRunnerForm : Form
         confirmButton.Click += (_, _) => ConfirmHeat();
         rerunButton.Click += (_, _) => PrepareRerun();
         historyButton.Click += (_, _) => ShowHistory();
+        repeatLineupButton.Click += (_, _) => RepeatCurrentAnnouncement();
+        repeatLineupButton.Visible = voiceAnnouncementsEnabled;
         lanesGrid.DataError += LanesGridOnDataError;
         client.MessageReceived += ClientOnMessageReceived;
         connectionTimer.Tick += (_, _) => UpdateConnectionStatus();
@@ -240,7 +252,7 @@ public sealed class TournamentRunnerForm : Form
         buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         buttons.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         var secondaryButtons = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = false };
-        secondaryButtons.Controls.AddRange([historyButton, rerunButton]);
+        secondaryButtons.Controls.AddRange([historyButton, repeatLineupButton, rerunButton]);
         var primaryButtons = new FlowLayoutPanel
         {
             Dock = DockStyle.Fill,
@@ -309,6 +321,9 @@ public sealed class TournamentRunnerForm : Form
     private void LoadHeat()
     {
         heat = NormalizeFinalHeat(round.Heats[heatIndex]);
+        lineupAnnounced = false;
+        resultsAnnounced = false;
+        lastAnnouncedLaneChoiceCarId = null;
         liveResults.Clear();
         resultAdvancerIds.Clear();
         confirmButton.Enabled = false;
@@ -374,6 +389,7 @@ public sealed class TournamentRunnerForm : Form
             }
             SetPhase(RunnerPhase.ReadyToStage);
             UpdateHeatActionButtons();
+            AnnounceLineupOnce();
             return;
         }
 
@@ -427,6 +443,11 @@ public sealed class TournamentRunnerForm : Form
         if (laneChoiceSession.IsComplete)
         {
             SetPhase(RunnerPhase.ReadyToStage);
+            AnnounceLineupOnce();
+        }
+        else
+        {
+            AnnounceCurrentLaneChoicePrompt();
         }
         UpdateHeatActionButtons();
     }
@@ -523,10 +544,12 @@ public sealed class TournamentRunnerForm : Form
             return false;
         }
 
-        var chooser = ((RoundEntry)row.Tag!).Car.DisplayName;
+        var chooserEntry = (RoundEntry)row.Tag!;
+        var chooser = chooserEntry.Car.DisplayName;
         AddTimeline(displaced.HasValue
             ? $"{chooser} chose lane {selectedLane}; displaced car moved to lane {originalLane}."
             : $"{chooser} chose lane {selectedLane}.");
+        Speak(RaceAnnouncementText.LaneChoiceConfirmed(chooserEntry.Car, selectedLane));
         RefreshLaneChoiceGrid();
         return false;
     }
@@ -601,6 +624,7 @@ public sealed class TournamentRunnerForm : Form
         commands.Add(["RESET"]);
         client.SendBatch(commands);
         AddTimeline("Heat armed. Stage only the displayed lanes.");
+        Speak(RaceAnnouncementText.HeatArmed(heat.Entries.Select(entry => entry.LaneNumber)));
         SetPhase(RunnerPhase.WaitingForStage);
         sendHeatButton.Enabled = false;
         UpdateHeatActionButtons();
@@ -839,6 +863,7 @@ public sealed class TournamentRunnerForm : Form
                 case "STAGING_ABORTED":
                     SetPhase(RunnerPhase.WaitingForStage);
                     AddTimeline("Staging was aborted because a car backed out.");
+                    Speak("Staging aborted. Please restage.");
                     break;
                 case "RACE_COMPLETE":
                     SetPhase(RunnerPhase.ResultsReady);
@@ -996,6 +1021,14 @@ public sealed class TournamentRunnerForm : Form
             : $"Confirm {advancing.Length} Advancers";
         confirmButton.Enabled = true;
         UpdateStatusCells();
+        if (!resultsAnnounced)
+        {
+            resultsAnnounced = true;
+            Speak(RaceAnnouncementText.HeatComplete(
+                heat.Entries
+                    .Where(entry => resultAdvancerIds.Contains(entry.Car.Id))
+                    .Select(entry => entry.Car)));
+        }
     }
 
     private void PrepareRerun()
@@ -1028,8 +1061,11 @@ public sealed class TournamentRunnerForm : Form
         }
         resultsSummary.Visible = false;
         confirmButton.Enabled = false;
+        resultsAnnounced = false;
+        lineupAnnounced = false;
         AddTimeline("Unconfirmed results discarded. Heat is ready to arm again.");
         SetPhase(RunnerPhase.ReadyToStage);
+        AnnounceLineupOnce();
     }
 
     private void ShowHistory()
@@ -1083,6 +1119,62 @@ public sealed class TournamentRunnerForm : Form
         UpdateHeatActionButtons();
     }
 
+    private void AnnounceLineupOnce()
+    {
+        if (!voiceAnnouncementsEnabled || lineupAnnounced)
+        {
+            return;
+        }
+
+        lineupAnnounced = true;
+        Speak(RaceAnnouncementText.HeatLineup(round.RoundNumber, AnnouncementHeat()));
+    }
+
+    private void AnnounceCurrentLaneChoicePrompt()
+    {
+        if (!voiceAnnouncementsEnabled ||
+            laneChoiceSession?.CurrentCarId is not long carId ||
+            lastAnnouncedLaneChoiceCarId == carId)
+        {
+            return;
+        }
+
+        var entry = heat.Entries.Single(item => item.Car.Id == carId);
+        lastAnnouncedLaneChoiceCarId = carId;
+        Speak(RaceAnnouncementText.LaneChoicePrompt(entry.Car));
+    }
+
+    private void RepeatCurrentAnnouncement()
+    {
+        if (phase == RunnerPhase.ChoosingLanes &&
+            laneChoiceSession?.CurrentCarId is long carId)
+        {
+            var entry = heat.Entries.Single(item => item.Car.Id == carId);
+            Speak(RaceAnnouncementText.LaneChoicePrompt(entry.Car));
+            return;
+        }
+
+        Speak(RaceAnnouncementText.HeatLineup(round.RoundNumber, AnnouncementHeat()));
+    }
+
+    private HeatPlan AnnouncementHeat() => laneChoiceSession is null
+        ? heat
+        : heat with
+        {
+            Entries = heat.Entries.Select(entry => entry with
+            {
+                LaneNumber = laneChoiceSession.GetLane(entry.Car.Id)
+            }).ToArray()
+        };
+
+    private void Speak(string phrase)
+    {
+        if (voiceAnnouncementsEnabled)
+        {
+            SpeechAnnouncer.SpeakAsync(phrase, speechVoiceName);
+        }
+    }
+
     private void AddTimeline(string text)
     {
         timeline.Items.Add($"{DateTime.Now:HH:mm:ss}  {text}");
@@ -1100,6 +1192,17 @@ public sealed class TournamentRunnerForm : Form
         }
 
         completionReportShown = true;
+        var runnerUp = winner is null
+            ? null
+            : heat.Entries
+                .Where(entry => entry.Car.Id != winner.Id)
+                .OrderBy(entry => liveResults.TryGetValue(entry.LaneNumber, out var result) &&
+                                  result.FinishOrder > 0
+                    ? result.FinishOrder
+                    : int.MaxValue)
+                .Select(entry => entry.Car)
+                .FirstOrDefault();
+        Speak(RaceAnnouncementText.TournamentComplete(winner, runnerUp));
         var summary = winner is null
             ? "Tournament complete with no winner."
             : $"Winner: {winner.DisplayName}";
