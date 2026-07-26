@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 
@@ -22,6 +23,10 @@ public sealed class MainForm : Form
     private AppSettings persistedSettings = AppSettingsStore.Load();
     private bool savedSettingsAppliedToController;
     private readonly ToolStripMenuItem configureRaceMenuItem = new("Race and track settings...");
+    private readonly ToolStripMenuItem backupDatabaseMenuItem = new("Back Up Database...");
+    private readonly ToolStripMenuItem restoreDatabaseMenuItem = new("Restore Database...");
+    private readonly ToolStripMenuItem openDatabaseFolderMenuItem = new("Open Database Folder");
+    private readonly ToolStripMenuItem openBackupFolderMenuItem = new("Open Backup Folder");
     private readonly ToolStripMenuItem pingMenuItem = new("Ping controller") { Enabled = false };
     private readonly ToolStripMenuItem statusMenuItem = new("Request controller status") { Enabled = false };
     private readonly ToolStripMenuItem resetMenuItem = new("Reset controller") { Enabled = false };
@@ -218,6 +223,10 @@ public sealed class MainForm : Form
         runTournamentButton.Click += (_, _) => RunMainButtonAction(runTournamentButton, RunSelectedTournament);
         startPracticeButton.Click += (_, _) => RunMainButtonAction(startPracticeButton, StartPracticeSetup);
         configureRaceMenuItem.Click += (_, _) => ShowRaceSettings();
+        backupDatabaseMenuItem.Click += (_, _) => BackUpDatabase();
+        restoreDatabaseMenuItem.Click += (_, _) => RestoreDatabase();
+        openDatabaseFolderMenuItem.Click += (_, _) => OpenDatabaseFolder();
+        openBackupFolderMenuItem.Click += (_, _) => OpenBackupFolder();
         pingMenuItem.Click += (_, _) => SendCommand("PING");
         statusMenuItem.Click += (_, _) => SendCommand("STATUS");
         resetMenuItem.Click += (_, _) => ResetController();
@@ -245,7 +254,11 @@ public sealed class MainForm : Form
             CheckAutoConnectAttempt();
         };
         heartbeatTimer.Start();
-        Shown += (_, _) => BeginInvoke(TryAutoConnect);
+        Shown += (_, _) =>
+        {
+            BeginInvoke(TryAutoConnect);
+            BeginInvoke(CreateAutomaticDatabaseBackup);
+        };
 
         RefreshPorts();
         RefreshTournaments();
@@ -257,6 +270,14 @@ public sealed class MainForm : Form
     private MenuStrip CreateMenuStrip()
     {
         var menuStrip = new MenuStrip { Dock = DockStyle.Top };
+        var dataMenu = new ToolStripMenuItem("Data");
+        dataMenu.DropDownItems.AddRange([
+            backupDatabaseMenuItem,
+            restoreDatabaseMenuItem,
+            new ToolStripSeparator(),
+            openDatabaseFolderMenuItem,
+            openBackupFolderMenuItem
+        ]);
         var configureMenu = new ToolStripMenuItem("Configure");
         configureMenu.DropDownItems.Add(configureRaceMenuItem);
         var diagnosticsMenu = new ToolStripMenuItem("Diagnostics");
@@ -271,8 +292,180 @@ public sealed class MainForm : Form
         ]);
         var testMenu = new ToolStripMenuItem("Test");
         testMenu.DropDownItems.Add(demoPracticeMenuItem);
-        menuStrip.Items.AddRange([configureMenu, diagnosticsMenu, testMenu]);
+        menuStrip.Items.AddRange([dataMenu, configureMenu, diagnosticsMenu, testMenu]);
         return menuStrip;
+    }
+
+    private void BackUpDatabase()
+    {
+        try
+        {
+            var backupDirectory = RaceRepository.GetDefaultBackupDirectory();
+            Directory.CreateDirectory(backupDirectory);
+
+            using var dialog = new SaveFileDialog
+            {
+                Title = "Back Up dragWin Database",
+                InitialDirectory = backupDirectory,
+                FileName = $"dragWin-backup-{DateTime.Now:yyyyMMdd-HHmmss}.db",
+                Filter = "SQLite database (*.db)|*.db|All files (*.*)|*.*",
+                DefaultExt = "db",
+                AddExtension = true,
+                OverwritePrompt = true,
+                RestoreDirectory = true
+            };
+            if (dialog.ShowDialog(this) != DialogResult.OK)
+            {
+                return;
+            }
+
+            UseWaitCursor = true;
+            var result = raceRepository.CreateBackup(dialog.FileName);
+            MessageBox.Show(
+                this,
+                $"Database backup verified and saved.\n\n" +
+                $"Racers: {result.RacerCount}\n" +
+                $"Cars: {result.CarCount}\n" +
+                $"Tournaments: {result.TournamentCount}\n\n" +
+                result.Path,
+                "Backup Complete",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+        }
+        catch (Exception exception)
+        {
+            MessageBox.Show(
+                this,
+                exception.Message,
+                "Database Backup Failed",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+        }
+        finally
+        {
+            UseWaitCursor = false;
+        }
+    }
+
+    private void OpenDatabaseFolder()
+    {
+        var directory = Path.GetDirectoryName(raceRepository.DatabasePath)
+            ?? throw new InvalidOperationException("The database folder could not be found.");
+        OpenFolder(directory, "Database Folder Could Not Be Opened");
+    }
+
+    private void OpenBackupFolder()
+    {
+        OpenFolder(
+            RaceRepository.GetDefaultBackupDirectory(),
+            "Backup Folder Could Not Be Opened");
+    }
+
+    private void RestoreDatabase()
+    {
+        try
+        {
+            var backupDirectory = RaceRepository.GetDefaultBackupDirectory();
+            Directory.CreateDirectory(backupDirectory);
+
+            using var dialog = new OpenFileDialog
+            {
+                Title = "Restore dragWin Database",
+                InitialDirectory = backupDirectory,
+                Filter = "SQLite database (*.db)|*.db|All files (*.*)|*.*",
+                CheckFileExists = true,
+                Multiselect = false,
+                RestoreDirectory = true
+            };
+            if (dialog.ShowDialog(this) != DialogResult.OK)
+            {
+                return;
+            }
+
+            var confirmation = MessageBox.Show(
+                this,
+                "Restore the selected database?\n\n" +
+                "The current database will be backed up automatically before it is replaced.",
+                "Confirm Database Restore",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning,
+                MessageBoxDefaultButton.Button2);
+            if (confirmation != DialogResult.Yes)
+            {
+                return;
+            }
+
+            var safetyBackupPath = Path.Combine(
+                backupDirectory,
+                $"dragWin-before-restore-{DateTime.Now:yyyyMMdd-HHmmss}.db");
+            UseWaitCursor = true;
+            var result = raceRepository.RestoreBackup(dialog.FileName, safetyBackupPath);
+            RefreshTournaments();
+
+            MessageBox.Show(
+                this,
+                $"Database restored and verified.\n\n" +
+                $"Racers: {result.RacerCount}\n" +
+                $"Cars: {result.CarCount}\n" +
+                $"Tournaments: {result.TournamentCount}\n\n" +
+                $"Previous database saved to:\n{result.SafetyBackupPath}",
+                "Restore Complete",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+        }
+        catch (Exception exception)
+        {
+            MessageBox.Show(
+                this,
+                exception.Message,
+                "Database Restore Failed",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+        }
+        finally
+        {
+            UseWaitCursor = false;
+        }
+    }
+
+    private void CreateAutomaticDatabaseBackup()
+    {
+        try
+        {
+            _ = raceRepository.CreateAutomaticBackup();
+        }
+        catch (Exception exception)
+        {
+            MessageBox.Show(
+                this,
+                "dragWin could not create today's automatic database backup.\n\n" +
+                exception.Message,
+                "Automatic Backup Failed",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+        }
+    }
+
+    private void OpenFolder(string directory, string errorTitle)
+    {
+        try
+        {
+            Directory.CreateDirectory(directory);
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = directory,
+                UseShellExecute = true
+            });
+        }
+        catch (Exception exception)
+        {
+            MessageBox.Show(
+                this,
+                exception.Message,
+                errorTitle,
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+        }
     }
 
     private Control CreateTitleBar()
@@ -615,7 +808,10 @@ public sealed class MainForm : Form
             raceRepository,
             client,
             decimal.ToInt32(stagedDelayInput.Value * 1000M),
-            stagingModeSelector.SelectedItem as string ?? "BOTH_BLOCKED").ShowDialog(this);
+            stagingModeSelector.SelectedItem as string ?? "BOTH_BLOCKED",
+            new TournamentReportExportOptions(
+                persistedSettings.ExportTournamentJson,
+                persistedSettings.ExportTournamentCsv)).ShowDialog(this);
         RefreshTournaments();
     }
 
@@ -889,6 +1085,8 @@ public sealed class MainForm : Form
             dialInputs.Select(input => input.Value).ToArray(),
             trackLengthInput.Value,
             speedTrapLengthInput.Value,
+            persistedSettings.ExportTournamentJson,
+            persistedSettings.ExportTournamentCsv,
             client.IsConnected);
         if (dialog.ShowDialog(this) != DialogResult.OK)
         {
@@ -902,6 +1100,8 @@ public sealed class MainForm : Form
         stagedDelayInput.Value = dialog.StagedDelaySeconds;
         trackLengthInput.Value = dialog.TrackLengthInches;
         speedTrapLengthInput.Value = dialog.SpeedTrapLengthInches;
+        persistedSettings.ExportTournamentJson = dialog.ExportTournamentJson;
+        persistedSettings.ExportTournamentCsv = dialog.ExportTournamentCsv;
         for (var lane = 0; lane < LaneCount; lane++)
         {
             dialInputs[lane].Value = dialog.DialSeconds[lane];
@@ -1332,7 +1532,9 @@ public sealed class MainForm : Form
                 .Select((input, index) => (input, lane: index + 1))
                 .Where(item => item.input.Checked)
                 .Select(item => item.lane)
-                .ToArray()
+                .ToArray(),
+            ExportTournamentJson = persistedSettings.ExportTournamentJson,
+            ExportTournamentCsv = persistedSettings.ExportTournamentCsv
         };
 
         try

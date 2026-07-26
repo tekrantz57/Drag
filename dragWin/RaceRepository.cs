@@ -5,11 +5,17 @@ namespace DragWin;
 
 public sealed class RaceRepository
 {
+    private const int CurrentSchemaVersion = 3;
     private readonly string connectionString;
+    private readonly string automaticBackupDirectory;
 
-    public RaceRepository(string? databasePath = null)
+    public RaceRepository(
+        string? databasePath = null,
+        string? automaticBackupDirectory = null)
     {
         DatabasePath = databasePath ?? GetDefaultDatabasePath();
+        this.automaticBackupDirectory = automaticBackupDirectory
+            ?? Path.Combine(GetDefaultBackupDirectory(), "Automatic");
         var directory = Path.GetDirectoryName(DatabasePath);
         if (!string.IsNullOrEmpty(directory))
         {
@@ -22,10 +28,159 @@ public sealed class RaceRepository
             ForeignKeys = true,
             Pooling = false
         }.ToString();
+        BackUpBeforeSchemaUpgrade();
         Initialize();
     }
 
     public string DatabasePath { get; }
+
+    public static string GetDefaultBackupDirectory()
+    {
+        return Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+            "dragWin Backups");
+    }
+
+    public DatabaseBackupResult? CreateAutomaticBackup(int retainedBackupCount = 14)
+    {
+        if (retainedBackupCount < 1)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(retainedBackupCount),
+                "At least one automatic backup must be retained.");
+        }
+
+        Directory.CreateDirectory(automaticBackupDirectory);
+        var backupPath = Path.Combine(
+            automaticBackupDirectory,
+            $"dragWin-auto-{DateTime.Now:yyyyMMdd}.db");
+        if (File.Exists(backupPath))
+        {
+            _ = InspectDatabase(backupPath, backupPath);
+            return null;
+        }
+
+        var result = CreateBackup(backupPath);
+        PruneAutomaticBackups(retainedBackupCount);
+        return result;
+    }
+
+    public DatabaseBackupResult CreateBackup(string backupPath)
+    {
+        if (string.IsNullOrWhiteSpace(backupPath))
+        {
+            throw new ArgumentException("A backup path is required.", nameof(backupPath));
+        }
+
+        var destinationPath = Path.GetFullPath(backupPath);
+        if (string.Equals(
+                destinationPath,
+                Path.GetFullPath(DatabasePath),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException(
+                "The backup must be saved separately from the active database.",
+                nameof(backupPath));
+        }
+
+        var destinationDirectory = Path.GetDirectoryName(destinationPath)
+            ?? throw new ArgumentException("The backup path has no directory.", nameof(backupPath));
+        Directory.CreateDirectory(destinationDirectory);
+        var temporaryPath = Path.Combine(
+            destinationDirectory,
+            $".{Path.GetFileName(destinationPath)}.{Guid.NewGuid():N}.tmp");
+
+        try
+        {
+            using (var source = OpenConnection())
+            using (var destination = new SqliteConnection(
+                       new SqliteConnectionStringBuilder
+                       {
+                           DataSource = temporaryPath,
+                           ForeignKeys = true,
+                           Pooling = false
+                       }.ToString()))
+            {
+                destination.Open();
+                source.BackupDatabase(destination);
+            }
+
+            var result = VerifyBackup(temporaryPath, destinationPath);
+            File.Move(temporaryPath, destinationPath, true);
+            return result;
+        }
+        finally
+        {
+            File.Delete(temporaryPath);
+            File.Delete(temporaryPath + "-shm");
+            File.Delete(temporaryPath + "-wal");
+        }
+    }
+
+    public DatabaseRestoreResult RestoreBackup(
+        string backupPath,
+        string safetyBackupPath)
+    {
+        if (string.IsNullOrWhiteSpace(backupPath))
+        {
+            throw new ArgumentException("A backup path is required.", nameof(backupPath));
+        }
+
+        var sourcePath = Path.GetFullPath(backupPath);
+        var activePath = Path.GetFullPath(DatabasePath);
+        if (string.Equals(sourcePath, activePath, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException(
+                "Select a backup rather than the active database.",
+                nameof(backupPath));
+        }
+        if (!File.Exists(sourcePath))
+        {
+            throw new FileNotFoundException("The selected database backup was not found.", sourcePath);
+        }
+
+        var safetyPath = Path.GetFullPath(safetyBackupPath);
+        if (string.Equals(sourcePath, safetyPath, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException(
+                "The safety backup must not overwrite the selected restore file.",
+                nameof(safetyBackupPath));
+        }
+
+        _ = InspectDatabase(sourcePath, sourcePath);
+        var safetyBackup = CreateBackup(safetyPath);
+
+        try
+        {
+            CopyDatabase(sourcePath, activePath);
+            var restoredContents = InspectDatabase(activePath, activePath);
+            return new DatabaseRestoreResult(
+                sourcePath,
+                safetyBackup.Path,
+                restoredContents.RacerCount,
+                restoredContents.CarCount,
+                restoredContents.TournamentCount);
+        }
+        catch (Exception restoreException)
+        {
+            try
+            {
+                CopyDatabase(safetyBackup.Path, activePath);
+            }
+            catch (Exception rollbackException)
+            {
+                throw new InvalidOperationException(
+                    $"The restore failed, and dragWin could not automatically restore the " +
+                    $"previous database. The safety backup is at '{safetyBackup.Path}'.",
+                    new AggregateException(restoreException, rollbackException));
+            }
+
+            throw new InvalidOperationException(
+                $"The restore failed. The previous database was restored automatically. " +
+                $"The safety backup is at '{safetyBackup.Path}'.",
+                restoreException);
+        }
+    }
 
     public IReadOnlyList<Racer> GetRacers()
     {
@@ -773,7 +928,57 @@ public sealed class RaceRepository
             """;
         command.ExecuteNonQuery();
         EnsureHeatEntryDialColumn(connection);
-        SetUserVersion(connection, 3);
+        SetUserVersion(connection, CurrentSchemaVersion);
+    }
+
+    private void BackUpBeforeSchemaUpgrade()
+    {
+        if (!File.Exists(DatabasePath) || new FileInfo(DatabasePath).Length == 0)
+        {
+            return;
+        }
+
+        using var connection = new SqliteConnection(
+            new SqliteConnectionStringBuilder
+            {
+                DataSource = DatabasePath,
+                Mode = SqliteOpenMode.ReadOnly,
+                Pooling = false
+            }.ToString());
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA user_version;";
+        var version = Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture);
+        connection.Close();
+
+        if (version > CurrentSchemaVersion)
+        {
+            throw new InvalidDataException(
+                $"The database uses newer schema version {version}; this version of dragWin " +
+                $"supports version {CurrentSchemaVersion}.");
+        }
+        if (version == CurrentSchemaVersion)
+        {
+            return;
+        }
+
+        Directory.CreateDirectory(automaticBackupDirectory);
+        var backupPath = Path.Combine(
+            automaticBackupDirectory,
+            $"dragWin-before-schema-v{version}-to-v{CurrentSchemaVersion}-" +
+            $"{DateTime.Now:yyyyMMdd-HHmmss}.db");
+        try
+        {
+            CopyDatabase(DatabasePath, backupPath);
+            VerifyIntegrityOnly(backupPath);
+        }
+        catch
+        {
+            File.Delete(backupPath);
+            File.Delete(backupPath + "-shm");
+            File.Delete(backupPath + "-wal");
+            throw;
+        }
     }
 
     private static void EnsureHeatEntryDialColumn(SqliteConnection connection)
@@ -828,6 +1033,140 @@ public sealed class RaceRepository
         return connection;
     }
 
+    private static DatabaseBackupResult VerifyBackup(
+        string temporaryPath,
+        string destinationPath)
+    {
+        return InspectDatabase(temporaryPath, destinationPath);
+    }
+
+    private static DatabaseBackupResult InspectDatabase(
+        string databasePath,
+        string reportedPath)
+    {
+        using var connection = new SqliteConnection(
+            new SqliteConnectionStringBuilder
+            {
+                DataSource = databasePath,
+                Mode = SqliteOpenMode.ReadOnly,
+                ForeignKeys = true,
+                Pooling = false
+            }.ToString());
+        connection.Open();
+
+        using (var integrityCommand = connection.CreateCommand())
+        {
+            integrityCommand.CommandText = "PRAGMA integrity_check;";
+            var integrityResult = Convert.ToString(
+                integrityCommand.ExecuteScalar(),
+                CultureInfo.InvariantCulture);
+            if (!string.Equals(integrityResult, "ok", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidDataException(
+                    $"SQLite could not verify the backup: {integrityResult ?? "unknown error"}");
+            }
+        }
+
+        using (var versionCommand = connection.CreateCommand())
+        {
+            versionCommand.CommandText = "PRAGMA user_version;";
+            var version = Convert.ToInt32(
+                versionCommand.ExecuteScalar(),
+                CultureInfo.InvariantCulture);
+            if (version != CurrentSchemaVersion)
+            {
+                throw new InvalidDataException(
+                    $"This database uses schema version {version}; " +
+                    $"dragWin requires version {CurrentSchemaVersion}.");
+            }
+        }
+
+        using (var foreignKeyCommand = connection.CreateCommand())
+        {
+            foreignKeyCommand.CommandText = "PRAGMA foreign_key_check;";
+            using var foreignKeyReader = foreignKeyCommand.ExecuteReader();
+            if (foreignKeyReader.Read())
+            {
+                throw new InvalidDataException(
+                    "The database contains invalid relationships and cannot be restored.");
+            }
+        }
+
+        using var countCommand = connection.CreateCommand();
+        countCommand.CommandText =
+            """
+            SELECT
+                (SELECT COUNT(*) FROM racers),
+                (SELECT COUNT(*) FROM cars),
+                (SELECT COUNT(*) FROM tournaments);
+            """;
+        using var reader = countCommand.ExecuteReader();
+        if (!reader.Read())
+        {
+            throw new InvalidDataException("SQLite could not read the backup contents.");
+        }
+
+        return new DatabaseBackupResult(
+            reportedPath,
+            reader.GetInt32(0),
+            reader.GetInt32(1),
+            reader.GetInt32(2));
+    }
+
+    private static void VerifyIntegrityOnly(string databasePath)
+    {
+        using var connection = new SqliteConnection(
+            new SqliteConnectionStringBuilder
+            {
+                DataSource = databasePath,
+                Mode = SqliteOpenMode.ReadOnly,
+                Pooling = false
+            }.ToString());
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA integrity_check;";
+        var result = Convert.ToString(command.ExecuteScalar(), CultureInfo.InvariantCulture);
+        if (!string.Equals(result, "ok", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidDataException(
+                $"SQLite could not verify the safety backup: {result ?? "unknown error"}");
+        }
+    }
+
+    private void PruneAutomaticBackups(int retainedBackupCount)
+    {
+        var obsoleteBackups = new DirectoryInfo(automaticBackupDirectory)
+            .EnumerateFiles("dragWin-auto-*.db", SearchOption.TopDirectoryOnly)
+            .OrderByDescending(file => file.Name, StringComparer.OrdinalIgnoreCase)
+            .Skip(retainedBackupCount);
+        foreach (var obsoleteBackup in obsoleteBackups)
+        {
+            obsoleteBackup.Delete();
+        }
+    }
+
+    private static void CopyDatabase(string sourcePath, string destinationPath)
+    {
+        using var source = new SqliteConnection(
+            new SqliteConnectionStringBuilder
+            {
+                DataSource = sourcePath,
+                Mode = SqliteOpenMode.ReadOnly,
+                ForeignKeys = true,
+                Pooling = false
+            }.ToString());
+        using var destination = new SqliteConnection(
+            new SqliteConnectionStringBuilder
+            {
+                DataSource = destinationPath,
+                ForeignKeys = true,
+                Pooling = false
+            }.ToString());
+        source.Open();
+        destination.Open();
+        source.BackupDatabase(destination);
+    }
+
     private static string RequiredName(string value, string parameterName)
     {
         value = value.Trim();
@@ -846,3 +1185,16 @@ public sealed class RaceRepository
         return Path.Combine(directory, "dragWin.db");
     }
 }
+
+public sealed record DatabaseBackupResult(
+    string Path,
+    int RacerCount,
+    int CarCount,
+    int TournamentCount);
+
+public sealed record DatabaseRestoreResult(
+    string RestoredFromPath,
+    string SafetyBackupPath,
+    int RacerCount,
+    int CarCount,
+    int TournamentCount);

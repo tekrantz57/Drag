@@ -32,6 +32,16 @@ public sealed class RaceSettingsForm : Form
         Dock = DockStyle.Fill
     };
     private readonly NumericUpDown[] dialInputs = new NumericUpDown[PhysicalLaneCount];
+    private readonly CheckBox exportJsonCheck = new()
+    {
+        Text = "Write JSON tournament archive",
+        AutoSize = true
+    };
+    private readonly CheckBox exportCsvCheck = new()
+    {
+        Text = "Write CSV tournament results",
+        AutoSize = true
+    };
 
     public RaceSettingsForm(
         string raceMode,
@@ -42,6 +52,8 @@ public sealed class RaceSettingsForm : Form
         IReadOnlyList<decimal> dialSeconds,
         decimal trackLengthInches,
         decimal speedTrapLengthInches,
+        bool exportTournamentJson,
+        bool exportTournamentCsv,
         bool controllerConnected)
     {
         Text = "Race and Track Settings";
@@ -63,10 +75,13 @@ public sealed class RaceSettingsForm : Form
         stagedDelayInput.Value = Math.Clamp(stagedDelaySeconds, stagedDelayInput.Minimum, stagedDelayInput.Maximum);
         trackLengthInput.Value = Math.Clamp(trackLengthInches, trackLengthInput.Minimum, trackLengthInput.Maximum);
         speedTrapLengthInput.Value = Math.Clamp(speedTrapLengthInches, speedTrapLengthInput.Minimum, speedTrapLengthInput.Maximum);
+        exportJsonCheck.Checked = exportTournamentJson;
+        exportCsvCheck.Checked = exportTournamentCsv;
 
         var tabs = new TabControl { Dock = DockStyle.Fill };
         tabs.TabPages.Add(CreateRaceTab(dialSeconds));
         tabs.TabPages.Add(CreateTrackTab());
+        tabs.TabPages.Add(CreateReportsTab());
 
         var saveButton = new Button
         {
@@ -126,6 +141,8 @@ public sealed class RaceSettingsForm : Form
     public decimal TrackLengthInches => trackLengthInput.Value;
     public decimal SpeedTrapLengthInches => speedTrapLengthInput.Value;
     public IReadOnlyList<decimal> DialSeconds => dialInputs.Select(input => input.Value).ToArray();
+    public bool ExportTournamentJson => exportJsonCheck.Checked;
+    public bool ExportTournamentCsv => exportCsvCheck.Checked;
 
     private TabPage CreateRaceTab(IReadOnlyList<decimal> dialSeconds)
     {
@@ -179,6 +196,22 @@ public sealed class RaceSettingsForm : Form
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         AddSettingRow(layout, 0, "Track length", trackLengthInput, "inches");
         AddSettingRow(layout, 1, "Speed trap length", speedTrapLengthInput, "inches");
+        tab.Controls.Add(layout);
+        return tab;
+    }
+
+    private TabPage CreateReportsTab()
+    {
+        var tab = new TabPage("Reports");
+        var layout = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            Padding = new Padding(14)
+        };
+        layout.Controls.Add(exportJsonCheck);
+        layout.Controls.Add(exportCsvCheck);
         tab.Controls.Add(layout);
         return tab;
     }

@@ -1,4 +1,5 @@
 using DragWin;
+using System.Text.Json;
 
 AssertEqual("PING:10", ProtocolMessage.Create("PING").Encode());
 AssertEqual("ACK:PING:63", ProtocolMessage.Create("ACK", "PING").Encode());
@@ -49,7 +50,9 @@ try
         TrackLengthInches = 1320M,
         SpeedTrapLengthInches = 66M,
         DialSeconds = [7.1M, 7.2M, 7.3M, 7.4M],
-        PracticeLanes = [1, 4]
+        PracticeLanes = [1, 4],
+        ExportTournamentJson = false,
+        ExportTournamentCsv = true
     }, settingsPath);
     var loadedSettings = AppSettingsStore.Load(settingsPath);
     AssertEqual("HEADS_UP", loadedSettings.RaceMode);
@@ -58,6 +61,8 @@ try
     AssertEqual(0.750M, loadedSettings.StagedDelaySeconds);
     AssertEqual(7.4M, loadedSettings.DialSeconds[3]);
     AssertEqual(4, loadedSettings.PracticeLanes[1]);
+    AssertEqual(false, loadedSettings.ExportTournamentJson);
+    AssertEqual(true, loadedSettings.ExportTournamentCsv);
 }
 finally
 {
@@ -231,9 +236,13 @@ AssertEqual(1, laneChoices.GetLane(3));
 var databasePath = Path.Combine(
     Path.GetTempPath(),
     $"dragWin-tests-{Guid.NewGuid():N}.db");
+var backupPath = databasePath + ".backup.db";
+var safetyBackupPath = databasePath + ".before-restore.db";
+var automaticBackupDirectory = databasePath + ".automatic";
+var reportExportDirectory = databasePath + ".reports";
 try
 {
-    var repository = new RaceRepository(databasePath);
+    var repository = new RaceRepository(databasePath, automaticBackupDirectory);
     var racer = repository.AddRacer("Test Racer");
     var car = repository.AddCar(racer.Id, "Test Car", 7500);
     car = repository.UpdateCar(car.Id, racer.Id, "Test Car Updated", 7600);
@@ -276,14 +285,105 @@ try
     AssertEqual(1, report.Rows.Count);
     AssertEqual("RedLight", report.Rows.Single().Legality?.ToString());
     Assert(report.Rows.Single().Advanced, "The report should mark the advancing car.");
+
+    var reportExports = TournamentReportArchiveWriter.Write(report, reportExportDirectory);
+    Assert(File.Exists(reportExports.Html), "The HTML tournament report should be exported.");
+    Assert(File.Exists(reportExports.Json), "The JSON tournament archive should be exported.");
+    Assert(File.Exists(reportExports.Csv), "The CSV tournament results should be exported.");
+    using (var archive = JsonDocument.Parse(File.ReadAllText(reportExports.Json!)))
+    {
+        AssertEqual(
+            TournamentReportArchiveWriter.CurrentSchemaVersion,
+            archive.RootElement.GetProperty("schemaVersion").GetInt32());
+        AssertEqual(
+            "Test Tournament",
+            archive.RootElement.GetProperty("tournamentReport")
+                .GetProperty("tournament")
+                .GetProperty("name")
+                .GetString());
+    }
+    var csvText = File.ReadAllText(reportExports.Csv!);
+    Assert(csvText.Contains("ReactionMicroseconds", StringComparison.Ordinal),
+        "The CSV should include stable result headers.");
+    Assert(csvText.Contains("Test Racer", StringComparison.Ordinal),
+        "The CSV should include tournament entrants.");
+
+    var htmlOnlyDirectory = Path.Combine(reportExportDirectory, "html-only");
+    var htmlOnly = TournamentReportArchiveWriter.Write(
+        report,
+        htmlOnlyDirectory,
+        new TournamentReportExportOptions(ExportJson: false, ExportCsv: false));
+    AssertEqual<string?>(null, htmlOnly.Json);
+    AssertEqual<string?>(null, htmlOnly.Csv);
+    AssertEqual(1, Directory.GetFiles(htmlOnlyDirectory).Length);
+
+    var backup = repository.CreateBackup(backupPath);
+    AssertEqual(backupPath, backup.Path);
+    AssertEqual(1, backup.RacerCount);
+    AssertEqual(1, backup.CarCount);
+    AssertEqual(1, backup.TournamentCount);
+    var backupRepository = new RaceRepository(backupPath);
+    AssertEqual("Test Racer", backupRepository.GetRacers().Single().Name);
+    AssertEqual("Test Car Updated", backupRepository.GetCars().Single().Name);
+    AssertEqual("COMPLETE", backupRepository.GetTournamentReport(tournament.Id).Status);
+
     repository.RetireCar(car.Id);
     AssertEqual(0, repository.GetCars().Count);
+    var restore = repository.RestoreBackup(backupPath, safetyBackupPath);
+    AssertEqual(backupPath, restore.RestoredFromPath);
+    AssertEqual(safetyBackupPath, restore.SafetyBackupPath);
+    AssertEqual(1, restore.RacerCount);
+    AssertEqual(1, restore.CarCount);
+    AssertEqual(1, restore.TournamentCount);
+    AssertEqual("Test Car Updated", repository.GetCars().Single().Name);
+    var safetyRepository = new RaceRepository(safetyBackupPath);
+    AssertEqual(0, safetyRepository.GetCars().Count);
+
+    Directory.CreateDirectory(automaticBackupDirectory);
+    File.Copy(backupPath, Path.Combine(automaticBackupDirectory, "dragWin-auto-20000101.db"));
+    File.Copy(backupPath, Path.Combine(automaticBackupDirectory, "dragWin-auto-20000102.db"));
+    var automaticBackup = repository.CreateAutomaticBackup(2);
+    Assert(automaticBackup is not null, "The first daily automatic backup should be created.");
+    Assert(File.Exists(automaticBackup!.Path), "The automatic backup file should exist.");
+    AssertEqual(1, automaticBackup.CarCount);
+    AssertEqual(2, Directory.EnumerateFiles(
+        automaticBackupDirectory,
+        "dragWin-auto-*.db").Count());
+    AssertEqual<DatabaseBackupResult?>(null, repository.CreateAutomaticBackup(2));
+
+    using (var versionConnection = new Microsoft.Data.Sqlite.SqliteConnection(
+               $"Data Source={databasePath};Pooling=False"))
+    {
+        versionConnection.Open();
+        using var versionCommand = versionConnection.CreateCommand();
+        versionCommand.CommandText = "PRAGMA user_version = 2;";
+        versionCommand.ExecuteNonQuery();
+    }
+    _ = new RaceRepository(databasePath, automaticBackupDirectory);
+    Assert(Directory.EnumerateFiles(
+            automaticBackupDirectory,
+            "dragWin-before-schema-v2-to-v3-*.db").Any(),
+        "A pre-migration safety backup should be created.");
 }
 finally
 {
     File.Delete(databasePath);
     File.Delete(databasePath + "-shm");
     File.Delete(databasePath + "-wal");
+    File.Delete(backupPath);
+    File.Delete(backupPath + "-shm");
+    File.Delete(backupPath + "-wal");
+    File.Delete(safetyBackupPath);
+    File.Delete(safetyBackupPath + "-shm");
+    File.Delete(safetyBackupPath + "-wal");
+    if (Directory.Exists(automaticBackupDirectory))
+    {
+        Directory.Delete(automaticBackupDirectory, true);
+    }
+    if (Directory.Exists(reportExportDirectory))
+    {
+        Directory.Delete(reportExportDirectory, true);
+    }
 }
 
 Console.WriteLine("Protocol tests passed.");

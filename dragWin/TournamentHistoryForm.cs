@@ -4,8 +4,13 @@ namespace DragWin;
 
 public sealed class TournamentHistoryForm : Form
 {
-    public TournamentHistoryForm(TournamentReport report)
+    private readonly TournamentReportExportOptions reportExportOptions;
+
+    public TournamentHistoryForm(
+        TournamentReport report,
+        TournamentReportExportOptions reportExportOptions)
     {
+        this.reportExportOptions = reportExportOptions;
         Text = $"Race History - {report.Tournament.Name}";
         MinimumSize = new Size(900, 480);
         Size = new Size(1050, 600);
@@ -70,14 +75,18 @@ public sealed class TournamentHistoryForm : Form
                   $"{confirmedRows.Select(row => (row.RoundNumber, row.HeatNumber)).Distinct().Count()} confirmed heat(s)",
             ForeColor = SystemColors.GrayText
         };
+        var reportButton = new Button { Text = "View / Export Report", AutoSize = true };
+        reportButton.Click += (_, _) => ShowReport(report);
         var closeButton = new Button { Text = "Close", AutoSize = true };
         closeButton.Click += (_, _) => Close();
         CancelButton = closeButton;
-        var footer = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, ColumnCount = 2 };
+        var footer = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, ColumnCount = 3 };
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         footer.Controls.Add(status, 0, 0);
-        footer.Controls.Add(closeButton, 1, 0);
+        footer.Controls.Add(reportButton, 1, 0);
+        footer.Controls.Add(closeButton, 2, 0);
 
         var layout = new TableLayoutPanel
         {
@@ -101,4 +110,27 @@ public sealed class TournamentHistoryForm : Form
         RunLegality.DidNotFinish => "DNF",
         _ => ""
     };
+
+    private void ShowReport(TournamentReport report)
+    {
+        try
+        {
+            var paths = TournamentReportArchiveWriter.Write(
+                report,
+                exportOptions: reportExportOptions);
+            using var form = new TournamentReportForm(report, paths);
+            form.ShowDialog(this);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or InvalidOperationException or
+                NotSupportedException or System.ComponentModel.Win32Exception)
+        {
+            MessageBox.Show(
+                this,
+                $"Could not create the report exports: {exception.Message}",
+                "Tournament Report",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+        }
+    }
 }

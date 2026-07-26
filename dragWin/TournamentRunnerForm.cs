@@ -20,6 +20,7 @@ public sealed class TournamentRunnerForm : Form
     private readonly DragSerialClient client;
     private readonly int stagedDelayMilliseconds;
     private readonly string stagingMode;
+    private readonly TournamentReportExportOptions reportExportOptions;
     private readonly TournamentPlanner planner = new();
     private readonly Label heading = new()
     {
@@ -119,13 +120,15 @@ public sealed class TournamentRunnerForm : Form
         RaceRepository repository,
         DragSerialClient client,
         int stagedDelayMilliseconds,
-        string stagingMode)
+        string stagingMode,
+        TournamentReportExportOptions reportExportOptions)
     {
         this.tournament = tournament;
         this.repository = repository;
         this.client = client;
         this.stagedDelayMilliseconds = Math.Clamp(stagedDelayMilliseconds, 0, 5000);
         this.stagingMode = stagingMode == "IN_ORDER" ? "IN_ORDER" : "BOTH_BLOCKED";
+        this.reportExportOptions = reportExportOptions;
         Text = $"Run Tournament - {tournament.Name}";
         MinimumSize = new Size(980, 680);
         Size = new Size(1180, 760);
@@ -1000,7 +1003,9 @@ public sealed class TournamentRunnerForm : Form
 
     private void ShowHistory()
     {
-        using var form = new TournamentHistoryForm(repository.GetTournamentReport(tournament.Id));
+        using var form = new TournamentHistoryForm(
+            repository.GetTournamentReport(tournament.Id),
+            reportExportOptions);
         form.ShowDialog(this);
     }
 
@@ -1070,18 +1075,20 @@ public sealed class TournamentRunnerForm : Form
         try
         {
             var report = repository.GetTournamentReport(tournament.Id);
-            var path = TournamentReportWriter.WriteAndOpen(report);
-            MessageBox.Show(
-                this,
-                $"{summary}{Environment.NewLine}{Environment.NewLine}Report opened:{Environment.NewLine}{path}",
-                Text);
+            var paths = TournamentReportArchiveWriter.Write(
+                report,
+                exportOptions: reportExportOptions);
+            using var form = new TournamentReportForm(report, paths);
+            form.ShowDialog(this);
         }
         catch (Exception exception) when (
-            exception is IOException or UnauthorizedAccessException or InvalidOperationException or System.ComponentModel.Win32Exception)
+            exception is IOException or UnauthorizedAccessException or InvalidOperationException or
+                NotSupportedException or System.ComponentModel.Win32Exception)
         {
             MessageBox.Show(
                 this,
-                $"{summary}{Environment.NewLine}{Environment.NewLine}Could not open the report: {exception.Message}",
+                $"{summary}{Environment.NewLine}{Environment.NewLine}" +
+                $"Could not create the report exports: {exception.Message}",
                 Text);
         }
     }

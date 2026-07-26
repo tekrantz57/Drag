@@ -41,6 +41,24 @@ The app stores tournament data in:
 %LOCALAPPDATA%\dragWin\dragWin.db
 ```
 
+Use **Data > Back Up Database...** to create and verify a portable SQLite copy.
+Backups default to `Documents\dragWin Backups`. **Data > Open Database Folder**
+opens the folder containing the active database.
+
+Use **Data > Restore Database...** to validate and restore one of those copies.
+dragWin automatically backs up the current database before replacing it.
+
+dragWin also creates one verified automatic backup per day at startup and keeps
+the newest 14 under `Documents\dragWin Backups\Automatic`. A safety copy is
+created there before any database schema upgrade. Use **Data > Open Backup
+Folder** to open the backup location.
+
+Tournament reports open inside dragWin in a browser-style report window. HTML
+is always written under `%LOCALAPPDATA%\dragWin\Reports`; optional JSON and CSV
+exports can be enabled independently under **Configure > Race and track
+settings... > Reports**. The JSON file is a versioned archive, while the CSV is
+a flat row-per-entrant result file intended for spreadsheets and custom reports.
+
 Serial logs are written by date under:
 
 ```text

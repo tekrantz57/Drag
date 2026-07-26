@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Globalization;
 using System.Net;
 using System.Text;
@@ -7,25 +6,30 @@ namespace DragWin;
 
 public static class TournamentReportWriter
 {
-    public static string WriteAndOpen(TournamentReport report)
+    public static string GetReportDirectory()
     {
-        var path = Write(report);
-        Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
-        return path;
-    }
-
-    public static string Write(TournamentReport report)
-    {
-        var directory = Path.Combine(
+        return Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "dragWin",
             "Reports");
+    }
+
+    public static string Write(TournamentReport report, string? outputDirectory = null)
+    {
+        var directory = string.IsNullOrWhiteSpace(outputDirectory)
+            ? GetReportDirectory()
+            : Path.GetFullPath(outputDirectory);
         Directory.CreateDirectory(directory);
 
         var fileName = $"{SafeFileName(report.Tournament.Name)}-{DateTime.Now:yyyyMMdd-HHmmss}.html";
         var path = Path.Combine(directory, fileName);
-        File.WriteAllText(path, BuildHtml(report), Encoding.UTF8);
+        WriteFile(report, path);
         return path;
+    }
+
+    public static void WriteFile(TournamentReport report, string path)
+    {
+        File.WriteAllText(path, BuildHtml(report), new UTF8Encoding(false));
     }
 
     private static string BuildHtml(TournamentReport report)
@@ -35,23 +39,19 @@ public static class TournamentReportWriter
         builder.AppendLine("<html lang=\"en\">");
         builder.AppendLine("<head>");
         builder.AppendLine("<meta charset=\"utf-8\">");
+        builder.AppendLine("<meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge\">");
         builder.Append("<title>");
         builder.Append(Html(report.Tournament.Name));
         builder.AppendLine(" results</title>");
         builder.AppendLine(
             """
             <style>
-            :root {
-              color-scheme: light dark;
-              --accent: #d7a21f;
-              --border: #c9c9c9;
-              --muted: #666;
-              --surface: #f7f7f7;
-            }
             body {
               font-family: Segoe UI, Arial, sans-serif;
               margin: 2rem;
               line-height: 1.35;
+              color: #202830;
+              background: #fff;
             }
             h1, h2 { margin-bottom: 0.25rem; }
             .summary {
@@ -61,14 +61,14 @@ public static class TournamentReportWriter
               margin: 1rem 0 1.5rem;
             }
             .card {
-              border: 1px solid var(--border);
+              border: 1px solid #c9c9c9;
               border-radius: 0.6rem;
               padding: 0.8rem 1rem;
               min-width: 12rem;
-              background: var(--surface);
+              background: #f7f7f7;
             }
             .label {
-              color: var(--muted);
+              color: #666;
               font-size: 0.85rem;
               text-transform: uppercase;
               letter-spacing: 0.05em;
@@ -84,19 +84,19 @@ public static class TournamentReportWriter
               margin: 0.7rem 0 1.4rem;
             }
             th, td {
-              border: 1px solid var(--border);
+              border: 1px solid #c9c9c9;
               padding: 0.4rem 0.5rem;
               text-align: left;
               vertical-align: top;
             }
             th {
-              background: var(--accent);
+              background: #d7a21f;
               color: #111;
             }
             tr.advanced td {
               font-weight: 650;
             }
-            .muted { color: var(--muted); }
+            .muted { color: #666; }
             .number { text-align: right; font-variant-numeric: tabular-nums; }
             @media print {
               body { margin: 0.5in; }
@@ -115,7 +115,7 @@ public static class TournamentReportWriter
 
         builder.AppendLine("<section class=\"summary\">");
         AddCard(builder, "Winner", report.Winner is { } winner
-            ? $"{winner.RacerName} — {winner.CarName}"
+            ? $"{winner.RacerName} - {winner.CarName}"
             : "No winner recorded");
         AddCard(builder, "Lanes", report.Tournament.LaneCount.ToString(CultureInfo.InvariantCulture));
         AddCard(builder, "Status", report.Status);
@@ -209,7 +209,7 @@ public static class TournamentReportWriter
             ? finishOrder.Value.ToString(CultureInfo.InvariantCulture)
             : "";
 
-    private static string SafeFileName(string value)
+    public static string SafeFileName(string value)
     {
         var invalid = Path.GetInvalidFileNameChars().ToHashSet();
         var safe = new string(value.Select(character => invalid.Contains(character) ? '-' : character).ToArray());
