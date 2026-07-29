@@ -15,6 +15,7 @@ public sealed class DragSerialClient : IDisposable
     private bool discardingOversizedLine;
     private string? lastTreeEventSignature;
     private long lastTreeEventAtMs;
+    private ControllerIdentity? currentControllerIdentity;
 
     public event EventHandler<ProtocolMessage>? MessageReceived;
     public event EventHandler<string>? ProtocolError;
@@ -26,6 +27,9 @@ public sealed class DragSerialClient : IDisposable
     public DateTimeOffset? LastHelloReceivedAt { get; private set; }
 
     public DateTimeOffset? LastHeartbeatReceivedAt { get; private set; }
+
+    public ControllerIdentity? CurrentControllerIdentity =>
+        Volatile.Read(ref currentControllerIdentity);
 
     public bool IsConnected
     {
@@ -70,6 +74,7 @@ public sealed class DragSerialClient : IDisposable
                 LastFrameReceivedAt = null;
                 LastHelloReceivedAt = null;
                 LastHeartbeatReceivedAt = null;
+                Volatile.Write(ref currentControllerIdentity, null);
                 lastTreeEventSignature = null;
                 lastTreeEventAtMs = 0;
                 serialPort = port;
@@ -252,6 +257,10 @@ public sealed class DragSerialClient : IDisposable
         if (message.Type == "HELLO")
         {
             LastHelloReceivedAt = LastFrameReceivedAt;
+            if (ControllerIdentity.TryParse(message, out var identity))
+            {
+                Volatile.Write(ref currentControllerIdentity, identity);
+            }
         }
         else if (message.Type == "HEARTBEAT")
         {
@@ -314,6 +323,7 @@ public sealed class DragSerialClient : IDisposable
         LastFrameReceivedAt = null;
         LastHelloReceivedAt = null;
         LastHeartbeatReceivedAt = null;
+        Volatile.Write(ref currentControllerIdentity, null);
         lastTreeEventSignature = null;
         lastTreeEventAtMs = 0;
         log.Info($"serial port closed on {portName}");

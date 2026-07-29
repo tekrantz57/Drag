@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <limits.h>
+#include "FirmwareVersion.h"
 
 namespace {
 
@@ -7,7 +8,7 @@ constexpr uint8_t MAX_LANE_COUNT = 4;
 constexpr uint8_t LIGHTS_PER_LANE = 7;
 constexpr uint8_t SENSORS_PER_LANE = 6;
 constexpr char FIRMWARE_NAME[] = "DRAG_MC";
-constexpr char FIRMWARE_VERSION[] = "0.6.0";
+constexpr char FIRMWARE_VERSION[] = DRAGMC_FIRMWARE_VERSION;
 constexpr uint8_t PROTOCOL_VERSION = 5;
 
 enum LightIndex : uint8_t {
@@ -1268,6 +1269,8 @@ void processCommand(char* line) {
 
   if (strcmp(line, "PING") == 0) {
     sendProtocolMessage("ACK:PING");
+  } else if (strcmp(line, "IDENTIFY") == 0) {
+    sendHello();
   } else if (strcmp(line, "STATUS") == 0) {
     sendStatus();
   } else if (strcmp(line, "SENSOR_DIAGNOSTICS") == 0) {

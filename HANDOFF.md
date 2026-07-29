@@ -22,7 +22,7 @@ GitHub at `https://github.com/tekrantz57/Drag`.
 ## Project Shape
 
 - `dragMC`: Arduino Mega 2560 firmware.
-- `dragWin`: .NET 9 WinForms operator app.
+- `dragWin`: .NET 10 WinForms operator app.
 - `dragWin/dragWin.ProtocolTests`: console-style protocol and planning tests.
 - `README.md`: project overview and normal build/run commands.
 - `HARDWARE.md`: controller, sensor polarity, wiring, pin maps, and hardware
@@ -87,6 +87,8 @@ GitHub at `https://github.com/tekrantz57/Drag`.
 - Firmware supports two optional interval timers per lane. Interval 1,
   Interval 2, and speed-trap crossing times are cumulative from launch; the
   app and exported reports also calculate the three segment times.
+- Firmware version `0.6.1` supports `IDENTIFY`, allowing DragWin to request a
+  fresh structured `HELLO` frame after flashing.
 - Controller-issued placements are authoritative for close finishes and
   four-lane advancement; negative reaction times are reported before fouls.
 - Active lane count can be 2 or 4; 2-lane mode uses physical lanes 1 and 4.
@@ -103,6 +105,8 @@ GitHub at `https://github.com/tekrantz57/Drag`.
   - tournament reports
   - optional Windows SAPI announcements for lineups, lane choices, advancing
     cars, tournament results, and practice results
+  - **File > Update Controller Firmware...**, with a validated bundled Mega
+    package, direct avrdude upload, reconnect, and DragMC identity verification
   - Sensor Test window that displays all required sensors and enabled interval
     timers for all four lanes, including raw blocked-edge counts and last
     blocked-pulse widths
@@ -122,8 +126,9 @@ dotnet run --project dragWin\dragWin.ProtocolTests\dragWin.ProtocolTests.csproj
 Both passed after documentation work. The solution build may report the known
 SQLite RID warning (`NETSDK1206`) for the test project.
 
-The interval-timer firmware compiles for the Arduino Mega 2560. The current
-build uses about 82% of SRAM, leaving about 1.4 KB; reassess memory use after
+DragMC `0.6.1` compiles for the Arduino Mega 2560 and is packaged as
+`dragMC/dist/DragMC-mega-0.6.1.dragfw`. The current build uses about 82% of
+SRAM, leaving about 1.4 KB; reassess memory use after
 physical 24-sensor testing or before adding more controller features.
 
 ## Good First Checks on the New Computer

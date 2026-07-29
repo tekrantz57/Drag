@@ -64,6 +64,7 @@ accepts a later stage blockage even after the pre-stage beam has cleared.
 ## Windows-to-controller commands
 
 - `PING`
+- `IDENTIFY`
 - `STATUS`
 - `SENSOR_DIAGNOSTICS`
 - `RESET_SENSOR_DIAGNOSTICS`
@@ -153,6 +154,10 @@ beam is blocked. If the finish is reached without that interval, the controller
 sends the corresponding `UNAVAILABLE` result. Missing or disabled interval
 timers never prevent a pass from finishing. Segment times are calculated by
 Windows from adjacent cumulative values.
+
+`IDENTIFY` makes the controller resend its `HELLO` frame. DragWin uses this
+after a firmware upload so verification does not depend on catching the one
+startup transmission while the serial port is reopening.
 
 `REACTION_US` is sent for both legal and foul starts; a negative value is the
 amount by which the lane left before green. It precedes the lane's `FOUL`

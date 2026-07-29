@@ -1,4 +1,6 @@
 using DragWin;
+using System.IO.Compression;
+using System.Security.Cryptography;
 using System.Text.Json;
 
 AssertEqual("PING:10", ProtocolMessage.Create("PING").Encode());
@@ -98,6 +100,106 @@ AssertEqual("INTERVAL_1_US", parsedInterval!.Parts[3]);
 AssertEqual(
     "RESET_SENSOR_DIAGNOSTICS:17",
     ProtocolMessage.Create("RESET_SENSOR_DIAGNOSTICS").Encode());
+AssertEqual("IDENTIFY:04", ProtocolMessage.Create("IDENTIFY").Encode());
+
+var identityMessage = ProtocolMessage.Create(
+    "HELLO", "DRAG_MC", "0.6.1", "PROTO", "5", "MCU", "MEGA2560",
+    "LANES", "4", "HEAT_LANES", "1,2,3,4");
+Assert(ControllerIdentity.TryParse(identityMessage, out var controllerIdentity),
+    "A DragMC HELLO should produce structured controller identity.");
+AssertEqual("DRAG_MC", controllerIdentity!.Product);
+AssertEqual("0.6.1", controllerIdentity.FirmwareVersion);
+AssertEqual(5, controllerIdentity.ProtocolVersion);
+AssertEqual("MEGA2560", controllerIdentity.Mcu);
+Assert(controllerIdentity.IsExpectedDragMc("0.6.1"),
+    "The expected DragMC identity should verify.");
+Assert(!controllerIdentity.IsExpectedDragMc("0.6.0"),
+    "A different firmware version must not verify.");
+
+var firmwarePackagePath = FindRepositoryFile(
+    Path.Combine("dragMC", "dist", "DragMC-mega-0.6.1.dragfw"));
+var firmwarePackage = ControllerFirmwarePackage.Load(firmwarePackagePath);
+AssertEqual("0.6.1", firmwarePackage.Manifest.FirmwareVersion);
+AssertEqual("ARDUINO_MEGA_2560", firmwarePackage.Manifest.BoardProfile);
+AssertEqual("atmega2560", firmwarePackage.Manifest.Mcu);
+var packageHash = Convert.ToHexString(SHA256.HashData(firmwarePackage.ImageBytes));
+AssertEqual(firmwarePackage.Manifest.Sha256, packageHash);
+
+var avrdudeTool = new AvrDudeTool(
+    @"C:\tools\avrdude.exe", @"C:\tools\avrdude.conf", "test", "test");
+var avrdudeArguments = ArduinoMegaFirmwareFlasher.BuildArguments(
+    avrdudeTool, "COM7", @"C:\temp\dragMC.ino.hex");
+Assert(avrdudeArguments.Contains("-patmega2560"), "avrdude must target ATmega2560.");
+Assert(avrdudeArguments.Contains("-cwiring"), "avrdude must use the wiring protocol.");
+Assert(avrdudeArguments.Contains("-PCOM7"), "avrdude must use the selected COM port.");
+Assert(avrdudeArguments.Contains("-b115200"), "avrdude must use the Mega upload baud.");
+Assert(avrdudeArguments.Contains("-D"), "avrdude must preserve the bootloader erase behavior.");
+Assert(!avrdudeArguments.Contains("-V"), "avrdude verification must remain enabled.");
+Assert(avrdudeArguments.Any(argument => argument.StartsWith("-Uflash:w:", StringComparison.Ordinal)),
+    "avrdude must write the application HEX image.");
+
+var firmwareTestDirectory = Path.Combine(
+    Path.GetTempPath(), $"dragWin-firmware-tests-{Guid.NewGuid():N}");
+Directory.CreateDirectory(firmwareTestDirectory);
+try
+{
+    var invalidProfiles = new[]
+    {
+        firmwarePackage.Manifest with { Product = "OTHER" },
+        firmwarePackage.Manifest with { FormatVersion = 2 },
+        firmwarePackage.Manifest with { BoardProfile = "OTHER_BOARD" },
+        firmwarePackage.Manifest with { BoardDisplayName = "Other board" },
+        firmwarePackage.Manifest with { Mcu = "atmega328p" },
+        firmwarePackage.Manifest with { UploaderBackend = "other" },
+        firmwarePackage.Manifest with { ArduinoFqbn = "arduino:avr:uno" },
+        firmwarePackage.Manifest with { UploadProtocol = "stk500v1" },
+        firmwarePackage.Manifest with { UploadBaud = 57600 }
+    };
+    for (var index = 0; index < invalidProfiles.Length; index++)
+    {
+        var invalidPath = Path.Combine(firmwareTestDirectory, $"invalid-profile-{index}.dragfw");
+        WriteFirmwarePackage(invalidPath, invalidProfiles[index], firmwarePackage.ImageBytes);
+        AssertThrows<InvalidDataException>(() => ControllerFirmwarePackage.Load(invalidPath));
+    }
+
+    var badHashManifest = firmwarePackage.Manifest with { Sha256 = new string('0', 64) };
+    var badHashPath = Path.Combine(firmwareTestDirectory, "bad-hash.dragfw");
+    WriteFirmwarePackage(badHashPath, badHashManifest, firmwarePackage.ImageBytes);
+    AssertThrows<InvalidDataException>(() => ControllerFirmwarePackage.Load(badHashPath));
+
+    var nestedManifest = firmwarePackage.Manifest with { ImageFile = "nested/dragMC.ino.hex" };
+    var nestedPath = Path.Combine(firmwareTestDirectory, "nested.dragfw");
+    WriteFirmwarePackage(nestedPath, nestedManifest, firmwarePackage.ImageBytes);
+    AssertThrows<InvalidDataException>(() => ControllerFirmwarePackage.Load(nestedPath));
+
+    var malformedImage = System.Text.Encoding.ASCII.GetBytes(":00000001FE\n");
+    var malformedManifest = firmwarePackage.Manifest with
+    {
+        ImageSizeBytes = malformedImage.Length,
+        Sha256 = Convert.ToHexString(SHA256.HashData(malformedImage))
+    };
+    var malformedPath = Path.Combine(firmwareTestDirectory, "malformed.dragfw");
+    WriteFirmwarePackage(malformedPath, malformedManifest, malformedImage);
+    AssertThrows<InvalidDataException>(() => ControllerFirmwarePackage.Load(malformedPath));
+
+    var missingEofImage = System.Text.Encoding.ASCII.GetBytes(":0100000000FF\n");
+    var missingEofManifest = firmwarePackage.Manifest with
+    {
+        ImageSizeBytes = missingEofImage.Length,
+        Sha256 = Convert.ToHexString(SHA256.HashData(missingEofImage))
+    };
+    var missingEofPath = Path.Combine(firmwareTestDirectory, "missing-eof.dragfw");
+    WriteFirmwarePackage(missingEofPath, missingEofManifest, missingEofImage);
+    AssertThrows<InvalidDataException>(() => ControllerFirmwarePackage.Load(missingEofPath));
+
+    AssertThrows<InvalidDataException>(() => AvrDudeProvider.ValidateOfficialArchive([0x00]));
+    AssertThrows<InvalidDataException>(() => AvrDudeProvider.ValidateOfficialArchive(
+        new byte[(int)AvrDudeProvider.OfficialArchiveSize]));
+}
+finally
+{
+    Directory.Delete(firmwareTestDirectory, recursive: true);
+}
 
 Assert(
     ProtocolMessage.TryParse("STATUS:TREE:GREEN:49", out var message, out _),
@@ -477,4 +579,48 @@ static void AssertEqual<T>(T expected, T actual)
     {
         throw new InvalidOperationException($"Expected '{expected}', received '{actual}'.");
     }
+}
+
+static void AssertThrows<TException>(Action action) where TException : Exception
+{
+    try
+    {
+        action();
+    }
+    catch (TException)
+    {
+        return;
+    }
+    throw new InvalidOperationException($"Expected {typeof(TException).Name}.");
+}
+
+static string FindRepositoryFile(string relativePath)
+{
+    for (var directory = new DirectoryInfo(AppContext.BaseDirectory);
+         directory is not null;
+         directory = directory.Parent)
+    {
+        var candidate = Path.Combine(directory.FullName, relativePath);
+        if (File.Exists(candidate))
+        {
+            return candidate;
+        }
+    }
+    throw new FileNotFoundException($"Could not locate repository file {relativePath}.");
+}
+
+static void WriteFirmwarePackage(
+    string path,
+    ControllerFirmwareManifest manifest,
+    byte[] imageBytes)
+{
+    using var archive = ZipFile.Open(path, ZipArchiveMode.Create);
+    var manifestEntry = archive.CreateEntry("manifest.json");
+    using (var stream = manifestEntry.Open())
+    {
+        JsonSerializer.Serialize(stream, manifest);
+    }
+    var imageEntry = archive.CreateEntry(manifest.ImageFile);
+    using var imageStream = imageEntry.Open();
+    imageStream.Write(imageBytes);
 }

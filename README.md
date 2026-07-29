@@ -7,7 +7,7 @@ The repository has two main parts:
 
 - `dragMC`: Arduino Mega 2560 firmware for tree lights, beam sensors, race
   timing, bracket logic, and the serial protocol.
-- `dragWin`: .NET 9 WinForms app for serial control, practice runs,
+- `dragWin`: .NET 10 WinForms app for serial control, practice runs,
   tournament setup/running, sensor testing, and race/tournament records.
 
 ## Current Hardware Model
@@ -42,16 +42,16 @@ The app stores tournament data in:
 %LOCALAPPDATA%\dragWin\dragWin.db
 ```
 
-Use **Data > Back Up Database...** to create and verify a portable SQLite copy.
-Backups default to `Documents\dragWin Backups`. **Data > Open Database Folder**
+Use **File > Back Up Database...** to create and verify a portable SQLite copy.
+Backups default to `Documents\dragWin Backups`. **File > Open Database Folder**
 opens the folder containing the active database.
 
-Use **Data > Restore Database...** to validate and restore one of those copies.
+Use **File > Restore Database...** to validate and restore one of those copies.
 dragWin automatically backs up the current database before replacing it.
 
 dragWin also creates one verified automatic backup per day at startup and keeps
 the newest 14 under `Documents\dragWin Backups\Automatic`. A safety copy is
-created there before any database schema upgrade. Use **Data > Open Backup
+created there before any database schema upgrade. Use **File > Open Backup
 Folder** to open the backup location.
 
 Tournament reports open inside dragWin in a browser-style report window. HTML
@@ -82,9 +82,22 @@ The firmware sketch is:
 dragMC\dragMC.ino
 ```
 
-Build and upload it for an Arduino Mega 2560. The firmware sends a `HELLO`
-frame after startup, accepts checksum-protected commands from the Windows app,
-and sends status, event, result, heartbeat, and error frames.
+Build and upload it for an Arduino Mega 2560. Operators can install the bundled
+application firmware through **File > Update Controller Firmware...**. This
+supports a Mega with its normal USB bootloader, including one running a
+different sketch; it does not repair a missing bootloader. See
+[docs/CONTROLLER_FIRMWARE_UPDATE.md](docs/CONTROLLER_FIRMWARE_UPDATE.md).
+
+Developers create the versioned application-only package with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
+  .\tools\Build-ControllerFirmware.ps1
+```
+
+The firmware sends a `HELLO` frame after startup or `IDENTIFY`, accepts
+checksum-protected commands, and sends status, event, result, heartbeat, and
+error frames.
 
 ## Protocol
 

@@ -1,5 +1,10 @@
 # DragWin Mega 2560 Firmware Flashing Handoff
 
+> **Implementation status (July 29, 2026):** Implemented for DragMC `0.6.1`.
+> Operator and developer instructions now live in
+> `docs/CONTROLLER_FIRMWARE_UPDATE.md`; the bench-test checklist remains in
+> `TODO.md` until a Mega is available.
+
 ## Purpose
 
 Add controller firmware installation and update support to DragWin, modeled on
@@ -28,7 +33,7 @@ workflow.
 
 - Firmware: `dragMC/dragMC.ino`
 - Windows app: `dragWin`
-- Target framework: .NET 9 WinForms
+- Target framework: .NET 10 WinForms
 - Controller: Arduino Mega 2560
 - Arduino FQBN: `arduino:avr:mega:cpu=atmega2560`
 - Normal serial link: 115200 baud
@@ -44,15 +49,14 @@ workflow.
 - `MainForm` already tracks the selected COM port, controller readiness,
   practice/tournament activity, and the latest `HELLO`/heartbeat times.
 
-The current sketch declares its version directly:
+The implemented shared firmware header declares:
 
 ```cpp
-constexpr char FIRMWARE_VERSION[] = "0.6.0";
+#define DRAGMC_FIRMWARE_VERSION "0.6.1"
 ```
 
-For reliable packaging, either parse that declaration in the build script or
-move the version to a small shared firmware header. The latter matches YATSS
-and reduces the risk that the package version and reported version diverge.
+The packaging script reads this header, and the sketch reports the same value,
+preventing package and controller versions from diverging.
 
 ## Recommended Scope
 
@@ -94,7 +98,7 @@ Suggested manifest:
 {
   "formatVersion": 1,
   "product": "DRAG_MC",
-  "firmwareVersion": "0.6.0",
+  "firmwareVersion": "0.6.1",
   "boardProfile": "ARDUINO_MEGA_2560",
   "boardDisplayName": "Arduino Mega 2560",
   "mcu": "atmega2560",
@@ -409,4 +413,3 @@ Do not deliberately remove the bootloader as part of routine testing.
   <https://github.com/arduino/ArduinoCore-avr/blob/master/boards.txt>
 - AVRDUDE source and licensing:
   <https://github.com/avrdudes/avrdude>
-

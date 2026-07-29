@@ -46,3 +46,15 @@
   and record their distances from stage for later speed/acceleration analysis.
 - Reassess Mega SRAM after physical testing. Firmware with all 24 debounced
   diagnostic inputs currently uses about 82% of the Mega's 8 KB SRAM.
+
+## Controller firmware update bench tests
+
+- Flash a Mega already running DragMC and confirm automatic reconnect and
+  structured `HELLO` verification.
+- Recover a Mega running a harmless different sketch through the manual board
+  confirmation path.
+- Test upload cancellation/failure behavior by selecting an unused COM port
+  and by disconnecting USB before upload. Do not deliberately remove the
+  bootloader.
+- Test at least one official Mega 2560 and one compatible clone if available.
+- Run Sensor Test and a physical pass after the first in-app firmware update.
