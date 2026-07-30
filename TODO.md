@@ -54,8 +54,8 @@
   its verified Windows avrdude package and successfully flashed the bundled
   firmware. The separate Windows ARM64 publish also ran natively under ARM64
   Wine 11 on a Rock 5B without x64 emulation or CPU translation for DragWin
-  itself; its pinned Windows 32-bit avrdude also ran under Wine and successfully
-  updated the controller.
+  itself; using `COM1`, its pinned Windows 32-bit avrdude also ran under Wine
+  and successfully updated the controller.
 - Recover a Mega running a harmless different sketch through the manual board
   confirmation path.
 - Test upload cancellation/failure behavior by selecting an unused COM port

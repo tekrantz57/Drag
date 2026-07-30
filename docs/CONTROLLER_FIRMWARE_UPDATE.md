@@ -74,9 +74,10 @@ permission to open the underlying serial device.
 The separate Windows ARM64 DragWin release has also been verified running
 natively under ARM64 Wine 11 on a Rock 5B, without x64 emulation or CPU
 translation for DragWin itself. From that ARM64 environment, DragWin also
-downloaded and validated the pinned Windows `avrdude` package and successfully
-updated the controller firmware. That uploader is the pinned Windows 32-bit
-`avrdude.exe` and ran under Wine; the update did not use native Linux avrdude.
+connected through `COM1`, downloaded and validated the pinned Windows `avrdude`
+package, and successfully updated the controller firmware. That uploader is the
+pinned Windows 32-bit `avrdude.exe` and ran under Wine; the update did not use
+native Linux avrdude.
 
 ## Developer Packaging
 

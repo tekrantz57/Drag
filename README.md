@@ -98,9 +98,9 @@ port is selected in DragWin.
 Both tested setups successfully connected to the Mega, allowed DragWin to
 download and validate its pinned Windows `avrdude` package, and flashed the
 bundled DragMC firmware. The ARM64 DragWin application itself ran natively on
-the Rock 5B without x64 emulation or CPU translation. The uploader is the
-pinned Windows 32-bit `avrdude.exe`, which also ran under Wine; DragWin did not
-invoke native Linux avrdude.
+the Rock 5B using `COM1`, without x64 emulation or CPU translation. The uploader
+is the pinned Windows 32-bit `avrdude.exe`, which also ran under Wine; DragWin
+did not invoke native Linux avrdude.
 Voice availability depends on the SAPI voices installed in the Wine prefix;
 announcements remain optional and are disabled by default.
 

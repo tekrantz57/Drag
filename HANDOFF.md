@@ -118,10 +118,11 @@ GitHub at `https://github.com/tekrantz57/Drag`.
   connection, automatic download and validation of the Windows avrdude package,
   and the bundled DragMC firmware flash all succeeded.
 - The self-contained Windows ARM64 release was separately verified running
-  natively under ARM64 Wine 11 on a Rock 5B. DragWin itself did not use x64
-  emulation or CPU translation. It also downloaded and validated the pinned
-  Windows 32-bit avrdude package, ran `avrdude.exe` under Wine, and successfully
-  updated the controller firmware without invoking native Linux avrdude.
+  natively under ARM64 Wine 11 on a Rock 5B using `COM1`. DragWin itself did not
+  use x64 emulation or CPU translation. It also downloaded and validated the
+  pinned Windows 32-bit avrdude package, ran `avrdude.exe` under Wine, and
+  successfully updated the controller firmware without invoking native Linux
+  avrdude.
 
 ## Validation Baseline
 
