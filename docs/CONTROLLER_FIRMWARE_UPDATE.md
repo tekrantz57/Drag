@@ -55,6 +55,29 @@ before extraction. avrdude is GPL-licensed; source and license information are
 available from [the avrdude project](https://github.com/avrdudes/avrdude). The
 tool archive is supplied by [Arduino Downloads](https://downloads.arduino.cc/).
 
+## Wine Compatibility
+
+The updater has been verified from the self-contained Windows x64 DragWin
+release under Wine 11 on an Intel Linux system. In the tested setup, the Mega
+appeared as `/dev/ttyACM0` and was mapped to `COM33` in the default Wine prefix:
+
+```bash
+ln -s /dev/ttyACM0 ~/.wine/dosdevices/com33
+```
+
+DragWin connected through `COM33`, downloaded and validated the pinned Windows
+`avrdude` archive, and successfully flashed the bundled DragMC firmware. A
+different Wine prefix or COM number can be used by changing the symlink path
+and selecting the corresponding port in DragWin. The Linux account must have
+permission to open the underlying serial device.
+
+The separate Windows ARM64 DragWin release has also been verified running
+natively under ARM64 Wine 11 on a Rock 5B, without x64 emulation or CPU
+translation for DragWin itself. From that ARM64 environment, DragWin also
+downloaded and validated the pinned Windows `avrdude` package and successfully
+updated the controller firmware. That uploader is the pinned Windows 32-bit
+`avrdude.exe` and ran under Wine; the update did not use native Linux avrdude.
+
 ## Developer Packaging
 
 Firmware versioning is defined in `dragMC/FirmwareVersion.h`. Build the current

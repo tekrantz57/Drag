@@ -74,6 +74,47 @@ Serial logs are written by date under:
 %LOCALAPPDATA%\dragWin\logs
 ```
 
+## Linux With Wine
+
+Two self-contained releases have been verified under Wine 11 on Linux:
+
+- the Windows x64 release on an Intel Linux system; and
+- the Windows ARM64 release natively under ARM64 Wine on a Rock 5B, without
+  x64 emulation or CPU translation.
+
+Map the Linux serial device into the Wine prefix before starting DragWin. The
+verified Intel/x64 setup exposed `/dev/ttyACM0` as `COM33`:
+
+```bash
+ln -s /dev/ttyACM0 ~/.wine/dosdevices/com33
+wine dragWin.exe
+```
+
+For a custom Wine prefix, create the `com33` link under that prefix's
+`dosdevices` directory instead. The Linux account must already have permission
+to access the serial device. Another COM number may be used as long as the same
+port is selected in DragWin.
+
+Both tested setups successfully connected to the Mega, allowed DragWin to
+download and validate its pinned Windows `avrdude` package, and flashed the
+bundled DragMC firmware. The ARM64 DragWin application itself ran natively on
+the Rock 5B without x64 emulation or CPU translation. The uploader is the
+pinned Windows 32-bit `avrdude.exe`, which also ran under Wine; DragWin did not
+invoke native Linux avrdude.
+Voice availability depends on the SAPI voices installed in the Wine prefix;
+announcements remain optional and are disabled by default.
+
+Create equivalent self-contained release directories from the repository root:
+
+```powershell
+dotnet publish dragWin\dragWin.csproj -c Release -r win-x64 `
+  --self-contained true -p:PublishSingleFile=false `
+  -o artifacts\release\DragWin-win-x64
+dotnet publish dragWin\dragWin.csproj -c Release -r win-arm64 `
+  --self-contained true -p:PublishSingleFile=false `
+  -o artifacts\release\DragWin-win-arm64
+```
+
 ## Firmware
 
 The firmware sketch is:

@@ -47,10 +47,15 @@
 - Reassess Mega SRAM after physical testing. Firmware with all 24 debounced
   diagnostic inputs currently uses about 82% of the Mega's 8 KB SRAM.
 
-## Controller firmware update bench tests
+## Remaining controller firmware update bench tests
 
-- Flash a Mega already running DragMC and confirm automatic reconnect and
-  structured `HELLO` verification.
+- Completed July 30, 2026: a self-contained x64 DragWin publish ran under Wine
+  11 on Intel Linux with `/dev/ttyACM0` linked as `COM33`; DragWin downloaded
+  its verified Windows avrdude package and successfully flashed the bundled
+  firmware. The separate Windows ARM64 publish also ran natively under ARM64
+  Wine 11 on a Rock 5B without x64 emulation or CPU translation for DragWin
+  itself; its pinned Windows 32-bit avrdude also ran under Wine and successfully
+  updated the controller.
 - Recover a Mega running a harmless different sketch through the manual board
   confirmation path.
 - Test upload cancellation/failure behavior by selecting an unused COM port
