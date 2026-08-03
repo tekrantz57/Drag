@@ -225,6 +225,43 @@ individual indicator LEDs, not 12 V lamps, LED strips, or modules with unknown
 internal wiring. Use transistor or ULN2803A drivers and a separate supply before
 expanding to a complete four-lane tree.
 
+### Trackmate Commercial Tree Option
+
+For the first venue installation, consider purchasing a finished Trackmate
+tree while retaining the one-lane pegboard tree as the firmware and wiring test
+fixture. Prices observed on August 3, 2026 were:
+
+- 16-inch LED tree: USD $335
+- 6-inch LED tree: USD $145
+
+The 16-inch tree is 15.5 inches high and 5.5 inches wide, with seven 10 mm LEDs
+in each 1.3-inch light cluster. Trackmate includes a 24 V adapter and a 5-foot
+cable. The smaller tree is 6 inches high and includes a 5-foot cable. Both are
+advertised for Trackmate DP2000/DP3000 systems, so neither is a confirmed
+drop-in electrical replacement for the LEDs connected directly to the Mega.
+
+Before purchasing, ask Trackmate for:
+
+1. The tree connector pinout.
+2. Whether the lights use a common-positive or common-negative connection.
+3. The current drawn by each independently controlled light group.
+4. Confirmation that all LED current limiting is contained inside the tree.
+5. Whether each light can be controlled by an open-collector output without a
+   DP2000 or DP3000 controller.
+
+Do not connect the tree's 24 V wiring directly to a Mega pin. If the tree is
+common-positive and each channel is activated by switching its negative side,
+two ULN2803A driver ICs may provide a simple interface for its 14 left/right
+light channels. A common-negative tree would instead require suitable high-side
+drivers. Confirm the actual pinout, polarity, and current before selecting
+either circuit. The Trackmate tree is intended for a conventional two-lane
+display; confirm whether two trees or a custom arrangement would be required
+for the eventual four-lane installation.
+
+Product references:
+<https://trackmateracing.com/shop/en/drag-racing/25-16-inch-led-tree.html>
+<https://trackmateracing.com/shop/en/drag-racing/26-led-tree-6-inch.html>
+
 ## Two-lane Mode
 
 Two-lane mode uses physical lanes 1 and 4. Lanes 2 and 3 are ignored and their
