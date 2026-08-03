@@ -1,158 +1,134 @@
-# Drag Strip
+# Drag
 
-Slot car drag strip controller for an Arduino Mega 2560 and a Windows
-operator app.
+Drag is an open-source slot-car drag timing and tournament-control system. An
+Arduino Mega 2560 owns beam timing, Tree sequencing, and immediate race logic;
+a .NET 10 Windows Forms application handles operator workflow, practice passes,
+tournaments, reports, diagnostics, backups, and controller firmware updates.
 
-The repository has two main parts:
+> **Public source preview:** Drag is being shared for technical reference and
+> careful bench evaluation. It has no production installation, and complete
+> moving-car and four-lane validation is still in progress. Prebuilt DragWin
+> application packages are not currently offered.
 
-- `dragMC`: Arduino Mega 2560 firmware for tree lights, beam sensors, race
-  timing, bracket logic, and the serial protocol.
-- `dragWin`: .NET 10 WinForms app for serial control, practice runs,
-  tournament setup/running, sensor testing, and race/tournament records.
+[![DragWin race-control main window](docs/images/dragwin-main.png)](docs/images/dragwin-main.png)
 
-## Current Hardware Model
+## Capabilities
+
+- Heads-up and bracket racing for two or four physical lanes.
+- Full and Pro Tree timing with configurable staging behavior and staged delay.
+- Practice passes, pass-result history, tournament setup, ordered lane choice,
+  byes, advancement, and final standings.
+- Four required beam sensors per lane plus two optional interval timers.
+- Controller-maintained sensor edge counts and raw blocked-pulse durations.
+- Cumulative interval, speed-trap, reaction, elapsed-time, speed, breakout,
+  placement, foul, and DNF reporting.
+- Local SQLite racer, car, tournament, pass, and settings storage.
+- HTML reports with optional JSON and CSV exports.
+- Verified manual restore, daily automatic backups, and pre-upgrade safety
+  backups.
+- Optional SAPI voice announcements, disabled by default.
+- In-app installation of the bundled DragMC firmware through the Mega's normal
+  USB bootloader.
+
+## Validation Status
+
+Lane 1 has four LM393 sensors wired and electrically validated. Sensor Test
+reported every input, and cardboard beam interruptions completed multiple
+end-to-end passes. A normal car has not yet completed that test because the
+3/4-inch track deck leaves the present optical paths below the guide flag. The
+planned correction is shallow routed mounting pockets, longer optical-component
+leads, or both.
+
+The two optional interval sensors per lane are implemented in firmware,
+diagnostics, pass results, tournament history, and exports, but are not yet
+installed at the track. Complete moving-car, four-lane, compatible-clone, and
+production tournament validation remains pending.
+
+See [Project Status](docs/PROJECT_STATUS.md) and [TODO](TODO.md) for the exact
+completed and remaining work.
+
+## Tested Platforms
+
+| Environment | Verified result |
+| --- | --- |
+| Windows x64 | Primary development and physical-track environment |
+| Wine 11 on Intel Linux | Self-contained x64 app, serial through `COM33`, automatic Windows avrdude download, and Mega firmware update |
+| ARM64 Wine 11 on Rock 5B | Native Windows ARM64 DragWin through `COM1`, including Windows 32-bit avrdude download and successful Mega firmware update |
+
+The ARM64 DragWin application ran without x64 CPU translation. The downloaded
+uploader is the pinned Windows 32-bit `avrdude.exe`, which Wine also executed
+successfully; DragWin does not invoke native Linux avrdude.
+
+## Hardware Summary
 
 - Controller: Arduino Mega 2560.
 - Serial: USB serial at 115200 baud.
-- Lanes: 4 physical lanes, with optional 2-lane mode using lanes 1 and 4.
-- Sensors: 4 required beam sensors per lane plus 2 optional interval timers
-  between stage and the speed trap.
-- Tree: selectable 500 ms Full Tree or 400 ms Pro Tree, with an independently
-  configurable staged-to-first-amber delay.
-- Sensor polarity: LM393 slot sensors are active-HIGH on this track. A blocked
-  beam reads `HIGH`; a clear beam reads `LOW`.
-- Wiring assumption: each sensor signal uses an Ethernet twisted pair with its
-  own ground return, plus a 10k pulldown from the Mega input node to ground.
+- Lanes: four, with two-lane mode using physical lanes 1 and 4.
+- Required sensors: pre-stage, stage, speed trap, and finish in every lane.
+- Optional sensors: Interval 1 and Interval 2 in each lane.
+- Current LM393 polarity: active-HIGH, with 10k input pulldowns recommended.
 
-See [HARDWARE.md](HARDWARE.md) for the full pin map and setup notes.
+The controller and sensor pin maps, wiring notes, optical-height limitation,
+and Tree outputs are documented in [HARDWARE.md](HARDWARE.md).
 
-## Windows App
-
-The WinForms app is in `dragWin`.
-
-```powershell
-dotnet build dragWin\dragWin.sln
-dotnet run --project dragWin\dragWin.csproj
-dotnet run --project dragWin\dragWin.ProtocolTests\dragWin.ProtocolTests.csproj
-```
-
-The app stores tournament data in:
+## Repository Layout
 
 ```text
-%LOCALAPPDATA%\dragWin\dragWin.db
+dragMC/                             Arduino Mega firmware
+  dragMC.ino                        race and sensor controller
+  FirmwareVersion.h                 controller firmware identity
+  dist/                             matching DragMC firmware package
+
+dragWin/                            .NET 10 Windows Forms application
+  dragWin.sln                       solution
+  dragWin.ProtocolTests/            lightweight integration test runner
+
+docs/                               build, protocol, status, and operator notes
+tools/Build-ControllerFirmware.ps1  reproducible Mega firmware packaging
 ```
 
-Use **File > Back Up Database...** to create and verify a portable SQLite copy.
-Backups default to `Documents\dragWin Backups`. **File > Open Database Folder**
-opens the folder containing the active database.
+The tracked `.dragfw` file is the controller image consumed and validated by a
+DragWin source build. It is not a separately advertised application download.
 
-Use **File > Restore Database...** to validate and restore one of those copies.
-dragWin automatically backs up the current database before replacing it.
+## Build And Test
 
-dragWin also creates one verified automatic backup per day at startup and keeps
-the newest 14 under `Documents\dragWin Backups\Automatic`. A safety copy is
-created there before any database schema upgrade. Use **File > Open Backup
-Folder** to open the backup location.
-
-Tournament reports open inside dragWin in a browser-style report window. HTML
-is always written under `%LOCALAPPDATA%\dragWin\Reports`; optional JSON and CSV
-exports can be enabled independently under **Configure > Race and track
-settings... > Reports**. The JSON file is a versioned archive, while the CSV is
-a flat row-per-entrant result file intended for spreadsheets and custom reports.
-Enabled interval timers add cumulative and segment timing to practice results,
-tournament history, HTML reports, JSON archives, and CSV exports.
-
-Optional Windows voice announcements can be enabled under **Configure > Race
-and track settings... > Announcements**. dragWin uses an installed Windows SAPI
-voice to announce tournament lineups, lane choices, cars advancing, final
-results, and practice-pass results. Speech runs independently from controller
-timing and is disabled by default.
-
-Serial logs are written by date under:
-
-```text
-%LOCALAPPDATA%\dragWin\logs
-```
-
-## Linux With Wine
-
-Two self-contained releases have been verified under Wine 11 on Linux:
-
-- the Windows x64 release on an Intel Linux system; and
-- the Windows ARM64 release natively under ARM64 Wine on a Rock 5B, without
-  x64 emulation or CPU translation.
-
-Map the Linux serial device into the Wine prefix before starting DragWin. The
-verified Intel/x64 setup exposed `/dev/ttyACM0` as `COM33`:
-
-```bash
-ln -s /dev/ttyACM0 ~/.wine/dosdevices/com33
-wine dragWin.exe
-```
-
-For a custom Wine prefix, create the `com33` link under that prefix's
-`dosdevices` directory instead. The Linux account must already have permission
-to access the serial device. Another COM number may be used as long as the same
-port is selected in DragWin.
-
-Both tested setups successfully connected to the Mega, allowed DragWin to
-download and validate its pinned Windows `avrdude` package, and flashed the
-bundled DragMC firmware. The ARM64 DragWin application itself ran natively on
-the Rock 5B using `COM1`, without x64 emulation or CPU translation. The uploader
-is the pinned Windows 32-bit `avrdude.exe`, which also ran under Wine; DragWin
-did not invoke native Linux avrdude.
-Voice availability depends on the SAPI voices installed in the Wine prefix;
-announcements remain optional and are disabled by default.
-
-Create equivalent self-contained release directories from the repository root:
+From the repository root on Windows:
 
 ```powershell
-dotnet publish dragWin\dragWin.csproj -c Release -r win-x64 `
-  --self-contained true -p:PublishSingleFile=false `
-  -o artifacts\release\DragWin-win-x64
-dotnet publish dragWin\dragWin.csproj -c Release -r win-arm64 `
-  --self-contained true -p:PublishSingleFile=false `
-  -o artifacts\release\DragWin-win-arm64
+dotnet build dragWin\dragWin.sln -c Release
+dotnet run --project dragWin\dragWin.ProtocolTests\dragWin.ProtocolTests.csproj -c Release
+dotnet format dragWin\dragWin.sln --verify-no-changes --no-restore
+arduino-cli compile --fqbn arduino:avr:mega:cpu=atmega2560 dragMC
 ```
 
-## Firmware
+The Windows application targets .NET 10. Visual Studio or the .NET SDK can
+build it. See [Building From Source](docs/BUILDING.md) for firmware packaging,
+local self-contained publishing, and clean-build expectations.
 
-The firmware sketch is:
+## Data And Privacy
 
-```text
-dragMC\dragMC.ino
-```
+DragWin writes its database, settings, serial logs, backups, and reports under
+the operator's Windows profile and Documents folders. Those files are not part
+of this repository. Racer names, car names, local paths, and serial activity can
+appear in databases, reports, screenshots, and logs; remove private data before
+sharing any diagnostic material.
 
-Build and upload it for an Arduino Mega 2560. Operators can install the bundled
-application firmware through **File > Update Controller Firmware...**. This
-supports a Mega with its normal USB bootloader, including one running a
-different sketch; it does not repair a missing bootloader. See
-[docs/CONTROLLER_FIRMWARE_UPDATE.md](docs/CONTROLLER_FIRMWARE_UPDATE.md).
+## Documentation
 
-Developers create the versioned application-only package with:
+- [Building from source](docs/BUILDING.md)
+- [Current project status](docs/PROJECT_STATUS.md)
+- [Hardware and wiring](HARDWARE.md)
+- [Tournament behavior](docs/TOURNAMENTS.md)
+- [Controller firmware updates](docs/CONTROLLER_FIRMWARE_UPDATE.md)
+- [Serial protocol](docs/SERIAL_PROTOCOL.md)
+- [Troubleshooting](docs/TROUBLESHOOTING.md)
+- [Engineering backlog](TODO.md)
+- [Third-party notices](THIRD_PARTY_NOTICES.md)
 
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
-  .\tools\Build-ControllerFirmware.ps1
-```
-
-The firmware sends a `HELLO` frame after startup or `IDENTIFY`, accepts
-checksum-protected commands, and sends status, event, result, heartbeat, and
-error frames.
-
-## Protocol
-
-The controller and Windows app use colon-delimited printable ASCII frames with
-a two-digit XOR checksum. See [dragWin/PROTOCOL.md](dragWin/PROTOCOL.md).
-
-## Operator Notes
-
-- Use `Test Sensors` in the Windows app after connecting to the Mega to verify
-  each lane's pre-stage, stage, speed-trap, and finish sensors.
-- In bracket mode, dial-ins are sent as integer milliseconds.
-- Tournament records are local SQLite records. GitHub is only backing up the
-  source code unless the app-data database is copied separately.
+The canonical repository is maintainer-controlled and is currently published
+for reference rather than as a contribution or support venue. See
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+Drag is licensed under the [MIT License](LICENSE).

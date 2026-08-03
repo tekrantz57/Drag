@@ -1,0 +1,57 @@
+name: Source validation
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: source-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-app:
+    name: .NET 10 build and tests
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install .NET 10 SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore dragWin\dragWin.sln
+
+      - name: Build
+        run: dotnet build dragWin\dragWin.sln -c Release --no-restore
+
+      - name: Run protocol tests
+        run: dotnet run --project dragWin\dragWin.ProtocolTests\dragWin.ProtocolTests.csproj -c Release --no-build
+
+      - name: Verify formatting
+        run: dotnet format dragWin\dragWin.sln --verify-no-changes --no-restore
+
+  mega-firmware:
+    name: Arduino Mega firmware
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Arduino CLI
+        uses: arduino/setup-arduino-cli@7ef629dcdf0f458ab7ae83149d629443deac6eac # v2.0.0
+
+      - name: Install Arduino AVR Boards
+        run: |
+          arduino-cli core update-index
+          arduino-cli core install arduino:avr@1.8.8
+
+      - name: Compile DragMC
+        run: arduino-cli compile --fqbn arduino:avr:mega:cpu=atmega2560 dragMC
