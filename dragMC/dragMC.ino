@@ -9,7 +9,7 @@ constexpr uint8_t LIGHTS_PER_LANE = 7;
 constexpr uint8_t SENSORS_PER_LANE = 6;
 constexpr char FIRMWARE_NAME[] = "DRAG_MC";
 constexpr char FIRMWARE_VERSION[] = DRAGMC_FIRMWARE_VERSION;
-constexpr uint8_t PROTOCOL_VERSION = 5;
+constexpr uint8_t PROTOCOL_VERSION = 6;
 
 enum LightIndex : uint8_t {
   PreStageLight,
@@ -69,7 +69,11 @@ constexpr unsigned long DEFAULT_DIAL_MS = 10000;
 constexpr uint8_t SERIAL_QUEUE_CAPACITY = 24;
 constexpr uint8_t SERIAL_FRAME_SIZE = 136;
 constexpr uint8_t MAX_SERIAL_INPUT_BYTES_PER_LOOP = 32;
+constexpr uint8_t SERIAL_DIAGNOSTIC_RESERVED_SLOTS = 4;
 constexpr unsigned long HEARTBEAT_INTERVAL_MS = 1000;
+constexpr unsigned long SENSOR_MONITOR_LEASE_MS = 3000;
+constexpr uint32_t ALL_SENSOR_BITS =
+    (1UL << (MAX_LANE_COUNT * SENSORS_PER_LANE)) - 1;
 
 enum class RaceMode : uint8_t { HeadsUp, Bracket };
 enum class TreeMode : uint8_t { Full, Pro };
@@ -103,13 +107,15 @@ class DebouncedBeamSensor {
     rawPulseStartedAtUs_ = nowUs;
   }
 
-  void update(const unsigned long nowMs) {
+  bool update(const unsigned long nowMs) {
     const unsigned long nowUs = micros();
     becameBlocked_ = false;
     becameUnblocked_ = false;
+    bool changed = false;
 
     const bool newRawBlocked = readRawBlocked();
     if (newRawBlocked != rawBlocked_) {
+      changed = true;
       if (newRawBlocked) {
         if (blockedEdgeCount_ < ULONG_MAX) ++blockedEdgeCount_;
         rawPulseStartedAtUs_ = nowUs;
@@ -124,7 +130,7 @@ class DebouncedBeamSensor {
 
     if (blocked_ == rawBlocked_ ||
         nowMs - rawChangedAtMs_ < SENSOR_DEBOUNCE_MS) {
-      return;
+      return changed;
     }
 
     blocked_ = rawBlocked_;
@@ -135,6 +141,7 @@ class DebouncedBeamSensor {
       unblockedAtUs_ = rawChangedAtUs_;
       becameUnblocked_ = true;
     }
+    return true;
   }
 
   bool isBlocked() const { return blocked_; }
@@ -224,6 +231,10 @@ uint8_t serialHeadOffset = 0;
 unsigned int droppedSerialMessageCount = 0;
 uint32_t protocolSequence = 0;
 unsigned long lastHeartbeatAtMs = 0;
+uint32_t pendingSensorDiagnosticMask = 0;
+unsigned long sensorMonitorRenewedAtMs = 0;
+uint8_t sensorDiagnosticCursor = 0;
+bool sensorMonitorEnabled = false;
 
 void formatHeatLanes(char* destination, const size_t destinationSize);
 void formatSplitLanes(char* destination, const size_t destinationSize);
@@ -242,12 +253,9 @@ bool messageGetsSequenceMetadata(const char* payload) {
          strncmp(payload, "RESULT:", 7) == 0;
 }
 
-void sendProtocolMessage(const char* payload) {
+bool queueProtocolMessage(const char* payload) {
   if (serialQueueCount >= SERIAL_QUEUE_CAPACITY) {
-    if (droppedSerialMessageCount < UINT_MAX) {
-      ++droppedSerialMessageCount;
-    }
-    return;
+    return false;
   }
 
   char sequencedPayload[SERIAL_FRAME_SIZE - 4];
@@ -272,6 +280,20 @@ void sendProtocolMessage(const char* payload) {
       checksum);
   serialQueueTail = (serialQueueTail + 1) % SERIAL_QUEUE_CAPACITY;
   ++serialQueueCount;
+  return true;
+}
+
+void sendProtocolMessage(const char* payload) {
+  if (!queueProtocolMessage(payload) && droppedSerialMessageCount < UINT_MAX) {
+    ++droppedSerialMessageCount;
+  }
+}
+
+void sendFlashProtocolMessage(PGM_P payload) {
+  char message[32];
+  strncpy_P(message, payload, sizeof(message) - 1);
+  message[sizeof(message) - 1] = '\0';
+  sendProtocolMessage(message);
 }
 
 void sendHello() {
@@ -986,34 +1008,111 @@ void sendStatus() {
   }
 }
 
-void sendSensorDiagnostics() {
-  char message[132];
+uint8_t sensorBitIndex(const uint8_t lane, const uint8_t sensor) {
+  return lane * SENSORS_PER_LANE + sensor;
+}
+
+bool sensorIsInstalled(const uint8_t lane, const uint8_t sensor) {
+  return (sensor != Split1Sensor && sensor != Split2Sensor) ||
+         laneHasSplitSensors(lane);
+}
+
+uint32_t installedSensorBits() {
+  uint32_t bits = 0;
   for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
     for (uint8_t sensor = 0; sensor < SENSORS_PER_LANE; ++sensor) {
-      if ((sensor == Split1Sensor || sensor == Split2Sensor) &&
-          !laneHasSplitSensors(lane)) continue;
-      const DebouncedBeamSensor& beam = sensors[lane][sensor];
-      if (beam.hasCompletedRawPulse()) {
-        snprintf(
-            message, sizeof(message),
-            "SENSOR:%u:%s:RAW:%u:EDGES:%lu:PULSE_US:%lu",
-            lane + 1,
-            SENSOR_NAMES[sensor],
-            beam.isRawBlocked() ? 1 : 0,
-            beam.blockedEdgeCount(),
-            beam.lastRawPulseWidthUs());
-      } else {
-        snprintf(
-            message, sizeof(message),
-            "SENSOR:%u:%s:RAW:%u:EDGES:%lu:PULSE_US:NONE",
-            lane + 1,
-            SENSOR_NAMES[sensor],
-            beam.isRawBlocked() ? 1 : 0,
-            beam.blockedEdgeCount());
+      if (sensorIsInstalled(lane, sensor)) {
+        bits |= 1UL << sensorBitIndex(lane, sensor);
       }
-      sendProtocolMessage(message);
     }
   }
+  return bits;
+}
+
+void queueSensorDiagnosticSnapshot(const bool includeUninstalled) {
+  pendingSensorDiagnosticMask |=
+      includeUninstalled ? ALL_SENSOR_BITS : installedSensorBits();
+}
+
+void queueChangedSensorDiagnostic(const uint8_t lane, const uint8_t sensor) {
+  if (!sensorMonitorEnabled || !sensorIsInstalled(lane, sensor)) return;
+  pendingSensorDiagnosticMask |= 1UL << sensorBitIndex(lane, sensor);
+}
+
+void serviceSensorDiagnostics() {
+  if (pendingSensorDiagnosticMask == 0 ||
+      serialQueueCount >=
+          SERIAL_QUEUE_CAPACITY - SERIAL_DIAGNOSTIC_RESERVED_SLOTS) {
+    return;
+  }
+
+  constexpr uint8_t sensorTotal = MAX_LANE_COUNT * SENSORS_PER_LANE;
+  for (uint8_t offset = 0; offset < sensorTotal; ++offset) {
+    const uint8_t bitIndex = (sensorDiagnosticCursor + offset) % sensorTotal;
+    const uint32_t bit = 1UL << bitIndex;
+    if ((pendingSensorDiagnosticMask & bit) == 0) continue;
+
+    const uint8_t lane = bitIndex / SENSORS_PER_LANE;
+    const uint8_t sensor = bitIndex % SENSORS_PER_LANE;
+    const DebouncedBeamSensor& beam = sensors[lane][sensor];
+    const uint8_t installed = sensorIsInstalled(lane, sensor) ? 1 : 0;
+    char message[132];
+    if (beam.hasCompletedRawPulse()) {
+      snprintf_P(
+          message, sizeof(message),
+          PSTR("SENSOR:%u:%s:INSTALLED:%u:BLOCKED:%u:RAW:%u:EDGES:%lu:PULSE_US:%lu"),
+          lane + 1,
+          SENSOR_NAMES[sensor],
+          installed,
+          beam.isBlocked() ? 1 : 0,
+          beam.isRawBlocked() ? 1 : 0,
+          beam.blockedEdgeCount(),
+          beam.lastRawPulseWidthUs());
+    } else {
+      snprintf_P(
+          message, sizeof(message),
+          PSTR("SENSOR:%u:%s:INSTALLED:%u:BLOCKED:%u:RAW:%u:EDGES:%lu:PULSE_US:NONE"),
+          lane + 1,
+          SENSOR_NAMES[sensor],
+          installed,
+          beam.isBlocked() ? 1 : 0,
+          beam.isRawBlocked() ? 1 : 0,
+          beam.blockedEdgeCount());
+    }
+
+    if (!queueProtocolMessage(message)) return;
+    pendingSensorDiagnosticMask &= ~bit;
+    sensorDiagnosticCursor = (bitIndex + 1) % sensorTotal;
+    return;
+  }
+}
+
+void startSensorMonitor(const unsigned long nowMs) {
+  sensorMonitorRenewedAtMs = nowMs;
+  if (sensorMonitorEnabled) return;
+  sensorMonitorEnabled = true;
+  queueSensorDiagnosticSnapshot(true);
+  sendFlashProtocolMessage(PSTR("ACK:SENSOR_MONITOR:START"));
+}
+
+void stopSensorMonitor() {
+  sensorMonitorEnabled = false;
+  pendingSensorDiagnosticMask = 0;
+  sendFlashProtocolMessage(PSTR("ACK:SENSOR_MONITOR:STOP"));
+}
+
+void updateSensorMonitor(const unsigned long nowMs) {
+  if (!sensorMonitorEnabled ||
+      nowMs - sensorMonitorRenewedAtMs < SENSOR_MONITOR_LEASE_MS) {
+    return;
+  }
+  sensorMonitorEnabled = false;
+  pendingSensorDiagnosticMask = 0;
+}
+
+void sendSensorDiagnostics() {
+  // Compatibility snapshot. Frames are emitted incrementally by the main loop.
+  queueSensorDiagnosticSnapshot(false);
 }
 
 void resetSensorDiagnostics() {
@@ -1022,6 +1121,7 @@ void resetSensorDiagnostics() {
       sensors[lane][sensor].resetDiagnostics();
     }
   }
+  if (sensorMonitorEnabled) queueSensorDiagnosticSnapshot(true);
 }
 
 int8_t hexValue(const char value) {
@@ -1193,6 +1293,7 @@ void processSetCommand(char* line) {
     }
 
     splitLaneMask = requestedMask;
+    if (sensorMonitorEnabled) queueSensorDiagnosticSnapshot(true);
     char splitLanes[10];
     char message[40];
     formatSplitLanes(splitLanes, sizeof(splitLanes));
@@ -1275,6 +1376,10 @@ void processCommand(char* line) {
     sendStatus();
   } else if (strcmp(line, "SENSOR_DIAGNOSTICS") == 0) {
     sendSensorDiagnostics();
+  } else if (strcmp_P(line, PSTR("SENSOR_MONITOR:START")) == 0) {
+    startSensorMonitor(millis());
+  } else if (strcmp_P(line, PSTR("SENSOR_MONITOR:STOP")) == 0) {
+    stopSensorMonitor();
   } else if (strcmp(line, "RESET_SENSOR_DIAGNOSTICS") == 0) {
     resetSensorDiagnostics();
     sendProtocolMessage("ACK:RESET_SENSOR_DIAGNOSTICS");
@@ -1416,13 +1521,17 @@ void loop() {
   const unsigned long nowMs = millis();
   for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
     for (uint8_t sensor = 0; sensor < SENSORS_PER_LANE; ++sensor) {
-      sensors[lane][sensor].update(nowMs);
+      if (sensors[lane][sensor].update(nowMs)) {
+        queueChangedSensorDiagnostic(lane, sensor);
+      }
     }
   }
+  updateSensorMonitor(nowMs);
   updateSerialCommands();
   updateSequentialStaging();
   updateStagingLights();
   updateTree(nowMs);
   updateHeartbeat(nowMs);
+  serviceSensorDiagnostics();
   serviceSerialOutput();
 }

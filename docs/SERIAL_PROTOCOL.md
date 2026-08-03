@@ -67,6 +67,8 @@ accepts a later stage blockage even after the pre-stage beam has cleared.
 - `IDENTIFY`
 - `STATUS`
 - `SENSOR_DIAGNOSTICS`
+- `SENSOR_MONITOR:START`
+- `SENSOR_MONITOR:STOP`
 - `RESET_SENSOR_DIAGNOSTICS`
 - `RESET`
 - `SET:LANES:<2|4>`
@@ -90,6 +92,8 @@ accepted only outside staging and an active race.
 - `HEARTBEAT:<controller-millis>:SEQ:<last-event-sequence>:STATE:<state>`
 - `ACK:PING`
 - `ACK:RESET`
+- `ACK:SENSOR_MONITOR:START`
+- `ACK:SENSOR_MONITOR:STOP`
 - `ACK:RESET_SENSOR_DIAGNOSTICS`
 - `ACK:SET:LANES:<2|4>`
 - `ACK:SET:HEAT_LANES:<comma-separated-physical-lanes>`
@@ -105,7 +109,7 @@ accepted only outside staging and an active race.
 - `STATUS:INTERVAL_LANES:<NONE|comma-separated-physical-lanes>`
 - `STATUS:INTERVALS:LANE:<lane>:ENABLED:<0|1>:INTERVAL_1:<0|1>:INTERVAL_2:<0|1>`
 - `STATUS:LANE:<lane>:DIAL_MS:<milliseconds>:PRESTAGE:<0|1>:PRESTAGE_LATCHED:<0|1>:STAGE:<0|1>:SPEED_TRAP:<0|1>:FINISH:<0|1>:FOUL:<0|1>:FINISHED:<0|1>`
-- `SENSOR:<lane>:<name>:RAW:<0|1>:EDGES:<count>:PULSE_US:<microseconds|NONE>`
+- `SENSOR:<lane>:<name>:INSTALLED:<0|1>:BLOCKED:<0|1>:RAW:<0|1>:EDGES:<count>:PULSE_US:<microseconds|NONE>`
 - `EVENT:TREE:<state>`
 - `EVENT:TREE:STAGING_ABORTED`
 - `EVENT:LANE:<lane>:AMBER_<1|2|3>`
@@ -148,6 +152,20 @@ race debounce is applied. `EDGES` counts clear-to-blocked transitions.
 `NONE` if no pulse has completed since startup or the last diagnostic reset.
 Counters saturate rather than wrapping and can be cleared without resetting
 the race controller.
+
+Protocol 6 adds leased sensor monitoring. `SENSOR_MONITOR:START` sends an
+initial snapshot incrementally and then sends change-only `SENSOR` frames. The
+same command renews the three-second lease without repeating the snapshot.
+`SENSOR_MONITOR:STOP`, lease expiration, or a controller reset stops the
+stream. Diagnostic frames retain four free output-queue positions for
+race-critical traffic, and a pending sensor remains pending until its newest
+state is successfully queued. DragWin renews the lease once per second.
+
+`BLOCKED` is the debounced state used by race logic; `RAW` is the immediate
+electrical state. `INSTALLED` is `0` only for optional interval positions that
+are disabled. `SENSOR_DIAGNOSTICS` remains available as a compatibility
+snapshot, but its frames are also emitted incrementally rather than filling
+the serial queue in one command.
 
 An enabled interval timer sends its cumulative launch-relative time when its
 beam is blocked. If the finish is reached without that interval, the controller

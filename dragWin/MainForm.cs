@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
 using System.Text;
@@ -169,6 +170,8 @@ public sealed class MainForm : Form
     };
     private readonly StringBuilder protocolLogBuffer = new();
     private readonly List<string> activityEntries = [];
+    private readonly ConcurrentQueue<ProtocolMessage> pendingControllerMessages = new();
+    private int controllerMessageDispatchScheduled;
     private int diagnosticsVersion;
     private bool firmwareUpdateActive;
 
@@ -260,8 +263,7 @@ public sealed class MainForm : Form
             UpdateSettingsSummary();
         };
         treeModeSelector.SelectedIndexChanged += (_, _) => UpdateSettingsSummary();
-        client.MessageReceived += (_, message) =>
-            PostToUi(() => HandleMessage(message));
+        client.MessageReceived += (_, message) => QueueControllerMessage(message);
         client.ProtocolError += (_, error) =>
             PostToUi(() => AppendLog($"! {error}"));
         heartbeatTimer.Tick += (_, _) =>
@@ -1114,6 +1116,7 @@ public sealed class MainForm : Form
             }
 
             client.Connect(portName);
+            client.Send("IDENTIFY");
             savedSettingsAppliedToController = false;
             SetConnectedState(true);
             AppendLog($"Connected to {portName} at 115200 baud.");
@@ -2102,6 +2105,30 @@ public sealed class MainForm : Form
         if (!IsDisposed)
         {
             BeginInvoke(action);
+        }
+    }
+
+    private void QueueControllerMessage(ProtocolMessage message)
+    {
+        pendingControllerMessages.Enqueue(message);
+        if (Interlocked.Exchange(ref controllerMessageDispatchScheduled, 1) == 0)
+        {
+            PostToUi(DrainControllerMessages);
+        }
+    }
+
+    private void DrainControllerMessages()
+    {
+        while (pendingControllerMessages.TryDequeue(out var message))
+        {
+            HandleMessage(message);
+        }
+
+        Interlocked.Exchange(ref controllerMessageDispatchScheduled, 0);
+        if (!pendingControllerMessages.IsEmpty &&
+            Interlocked.Exchange(ref controllerMessageDispatchScheduled, 1) == 0)
+        {
+            PostToUi(DrainControllerMessages);
         }
     }
 

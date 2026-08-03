@@ -46,5 +46,6 @@ components, routed mounting pockets, or both.
   advancement behavior.
 - Production tournament operation and feedback from additional operators.
 
-The current Mega firmware uses approximately 82 percent of its 8 KB SRAM.
+The current Mega firmware uses approximately 81 percent of its 8 KB SRAM
+(6,656 bytes, leaving 1,536 bytes for local variables).
 Reassess memory after all 24 sensor inputs are installed and exercised.

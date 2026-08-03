@@ -124,6 +124,65 @@ or combining both methods. Preserve clearance so the guide cannot strike the
 components. Insulate and strain-relieve extended leads, then secure the final
 alignment against vibration before collecting moving-car pulse widths.
 
+### Recommended Sensor-height Modification
+
+For the first prototype, reuse the original photo-interrupter rather than
+assuming that a different part will fit the generic LM393 board. Desolder the
+interrupter, extend its four terminals with short insulated solid wires, and
+mount it higher or on the opposite side of the board. This preserves the known
+optical behavior, slot clearance, polarity, and LM393 comparator response.
+Provide a bracket or other mechanical support so the extended leads do not set
+or maintain the sensor alignment.
+
+Identify and label all four PCB connections by function before removing the
+original part: LED anode, LED cathode, phototransistor collector, and
+phototransistor emitter. Mounting a part on the opposite side of the PCB
+mirrors its footprint, so reconnect by function rather than by physical pad
+position. After modification, readjust the LM393 threshold if necessary and
+confirm clear=`LOW` and blocked=`HIGH` in Sensor Test.
+
+The Lite-On LTH-301-05 remains a possible substitute when additional lead
+length is useful, but it is not a confirmed drop-in replacement. Its
+manufacturer drawing specifies a 6.0 mm slot, 14.0 mm overall width, 10.45 mm
+body length, 5.2 mm lead-row spacing, 2.54 mm spacing between adjacent leads,
+and at least 9.12 mm of lead below the case. The 10.45 mm measurement is a body
+dimension, not pin pitch. Verify that the 6.0 mm slot provides adequate guide
+flag clearance and use insulated jumper leads if its footprint does not match
+the board.
+
+Do not assume that the existing interrupter is a particular H2010 variant from
+an online summary. Generic parts and modules use that name inconsistently, and
+commonly advertised H2010 LM393 modules have a 10 mm slot. Measure the actual
+interrupter's slot, body, and hole centers with calipers before selecting a
+replacement or routing the track. Prototype one assembly and validate it with
+the Sensor Test edge counts and pulse durations before modifying the remaining
+sensors.
+
+LTH-301-05 manufacturer drawing:
+<https://optoelectronics.liteon.com/upload/download/DS-55-92-0002/H301-05.pdf>
+
+### Commercial Carrier-board Alternative
+
+Trackmate Racing sells guide-flag sensor assemblies for either 1/2-inch or
+3/4-inch tracks. Product photographs show a U-shaped photo-interrupter raised
+on its leads above a passive carrier PCB, with the bulk of the electronics
+located elsewhere. A separate carrier combines the pre-stage and stage
+interrupters. This commercially validates the general raised-sensor approach
+and could provide a ready-made alternative or a useful reference assembly.
+
+Trackmate does not publish the interrupter part number, pinout, LED current
+requirements, or phototransistor characteristics, so its assembly is not a
+confirmed electrical replacement for the current LM393 sensors. It may require
+an adapter or connection to a separate comparator board. Purchasing a sample
+or designing a similar passive carrier would also introduce delay. Therefore,
+keep the modification above as the immediate path to a working installation;
+consider the Trackmate assembly later if the in-hand prototype is mechanically
+unsatisfactory.
+
+Trackmate reference assemblies:
+<https://trackmateracing.com/shop/en/drag-racing/31-guide-flag-sensor.html>
+<https://trackmateracing.com/shop/en/drag-racing/30-prestage-stage-guide-flag-sensor.html>
+
 ## Tree Light Pin Map
 
 Each lane has seven light outputs: pre-stage, stage, amber 1, amber 2,

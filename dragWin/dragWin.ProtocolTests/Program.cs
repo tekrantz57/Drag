@@ -101,13 +101,21 @@ AssertEqual("GREEN", eventMessage!.Parts[3]);
 AssertEqual("42", eventMessage.Parts[5]);
 
 var sensorDiagnostic = ProtocolMessage.Create(
-    "SENSOR", "1", "SPEED_TRAP", "RAW", "0", "EDGES", "7",
+    "SENSOR", "1", "SPEED_TRAP", "INSTALLED", "1", "BLOCKED", "1",
+    "RAW", "0", "EDGES", "7",
     "PULSE_US", "1340").Encode();
 Assert(
     ProtocolMessage.TryParse(sensorDiagnostic, out var sensorDiagnosticMessage, out _),
     "A sensor diagnostic should round-trip.");
 AssertEqual("SPEED_TRAP", sensorDiagnosticMessage!.Parts[2]);
-AssertEqual("7", sensorDiagnosticMessage.Parts[6]);
+AssertEqual("1", sensorDiagnosticMessage.Parts[4]);
+AssertEqual("1", sensorDiagnosticMessage.Parts[6]);
+AssertEqual("7", sensorDiagnosticMessage.Parts[10]);
+var sensorMonitorCommand = ProtocolMessage.Create("SENSOR_MONITOR", "START").Encode();
+Assert(
+    ProtocolMessage.TryParse(sensorMonitorCommand, out var sensorMonitorMessage, out _),
+    "A sensor-monitor lease command should round-trip.");
+AssertEqual("START", sensorMonitorMessage!.Parts[1]);
 var intervalMessage = ProtocolMessage.Create(
     "RESULT", "LANE", "1", "INTERVAL_1_US", "3450000").Encode();
 Assert(ProtocolMessage.TryParse(intervalMessage, out var parsedInterval, out _),
@@ -119,23 +127,23 @@ AssertEqual(
 AssertEqual("IDENTIFY:04", ProtocolMessage.Create("IDENTIFY").Encode());
 
 var identityMessage = ProtocolMessage.Create(
-    "HELLO", "DRAG_MC", "0.6.1", "PROTO", "5", "MCU", "MEGA2560",
+    "HELLO", "DRAG_MC", "0.6.2", "PROTO", "6", "MCU", "MEGA2560",
     "LANES", "4", "HEAT_LANES", "1,2,3,4");
 Assert(ControllerIdentity.TryParse(identityMessage, out var controllerIdentity),
     "A DragMC HELLO should produce structured controller identity.");
 AssertEqual("DRAG_MC", controllerIdentity!.Product);
-AssertEqual("0.6.1", controllerIdentity.FirmwareVersion);
-AssertEqual(5, controllerIdentity.ProtocolVersion);
+AssertEqual("0.6.2", controllerIdentity.FirmwareVersion);
+AssertEqual(6, controllerIdentity.ProtocolVersion);
 AssertEqual("MEGA2560", controllerIdentity.Mcu);
-Assert(controllerIdentity.IsExpectedDragMc("0.6.1"),
+Assert(controllerIdentity.IsExpectedDragMc("0.6.2"),
     "The expected DragMC identity should verify.");
 Assert(!controllerIdentity.IsExpectedDragMc("0.6.0"),
     "A different firmware version must not verify.");
 
 var firmwarePackagePath = FindRepositoryFile(
-    Path.Combine("dragMC", "dist", "DragMC-mega-0.6.1.dragfw"));
+    Path.Combine("dragMC", "dist", "DragMC-mega-0.6.2.dragfw"));
 var firmwarePackage = ControllerFirmwarePackage.Load(firmwarePackagePath);
-AssertEqual("0.6.1", firmwarePackage.Manifest.FirmwareVersion);
+AssertEqual("0.6.2", firmwarePackage.Manifest.FirmwareVersion);
 AssertEqual("ARDUINO_MEGA_2560", firmwarePackage.Manifest.BoardProfile);
 AssertEqual("atmega2560", firmwarePackage.Manifest.Mcu);
 var packageHash = Convert.ToHexString(SHA256.HashData(firmwarePackage.ImageBytes));

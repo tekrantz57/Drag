@@ -45,7 +45,8 @@
 - Confirm the physical locations of Interval 1 and Interval 2 for each lane
   and record their distances from stage for later speed/acceleration analysis.
 - Reassess Mega SRAM after physical testing. Firmware with all 24 debounced
-  diagnostic inputs currently uses about 82% of the Mega's 8 KB SRAM.
+  diagnostic inputs and change-only monitoring currently uses 6,656 bytes,
+  about 81% of the Mega's 8 KB SRAM.
 
 ## Remaining controller firmware update bench tests
 
