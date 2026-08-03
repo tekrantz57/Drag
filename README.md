@@ -5,7 +5,7 @@ Arduino Mega 2560 owns beam timing, Tree sequencing, and immediate race logic;
 a .NET 10 Windows Forms application handles operator workflow, practice passes,
 tournaments, reports, diagnostics, backups, and controller firmware updates.
 
-> **Public source preview:** Drag is being shared for technical reference and
+> **Public beta source preview (`v0.05.0-beta.1`):** Drag is being shared for technical reference and
 > careful bench evaluation. It has no production installation, and complete
 > moving-car and four-lane validation is still in progress. Prebuilt DragWin
 > application packages are not currently offered.

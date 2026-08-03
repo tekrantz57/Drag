@@ -4,6 +4,10 @@ Drag is an experimental slot-car drag timing and tournament-control project.
 Its software workflows are substantially implemented, while full physical-track
 validation remains in progress.
 
+The current public source milestone is `v0.05.0-beta.1`. DragWin displays the
+exact Git tag for tagged builds and includes commit and dirty-state details for
+development builds.
+
 ## Completed
 
 - Four-lane and two-lane race models, with two-lane mode using lanes 1 and 4.

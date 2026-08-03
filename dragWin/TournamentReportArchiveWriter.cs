@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -61,7 +60,7 @@ public static class TournamentReportArchiveWriter
     {
         var archive = new TournamentReportArchive(
             CurrentSchemaVersion,
-            Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown",
+            BuildIdentity.Current,
             DateTimeOffset.Now,
             report);
         var options = new JsonSerializerOptions(JsonSerializerDefaults.Web)
@@ -76,7 +75,7 @@ public static class TournamentReportArchiveWriter
     {
         var csv = new StringBuilder();
         AppendRow(csv,
-            "TournamentId", "TournamentName", "Status", "TournamentCreatedUtc", "LaneCount",
+            "ApplicationVersion", "TournamentId", "TournamentName", "Status", "TournamentCreatedUtc", "LaneCount",
             "Round", "Heat", "Lane", "LaneChoiceOrder", "Racer", "Car", "DialMilliseconds",
             "IsBye", "Legality", "FinishOrder", "ReactionMicroseconds", "BreakoutMicroseconds",
             "ElapsedMicroseconds", "SpeedMphX100", "IntervalTimersEnabled",
@@ -88,6 +87,7 @@ public static class TournamentReportArchiveWriter
                      .ThenBy(row => row.LaneNumber))
         {
             AppendRow(csv,
+                BuildIdentity.Current,
                 report.Tournament.Id,
                 report.Tournament.Name,
                 report.Status,

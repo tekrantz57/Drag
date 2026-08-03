@@ -91,6 +91,12 @@ public sealed class MainForm : Form
         AutoSize = true,
         ForeColor = SystemColors.GrayText
     };
+    private readonly Label versionLabel = new()
+    {
+        AutoSize = true,
+        ForeColor = SystemColors.GrayText,
+        Margin = new Padding(1, 0, 0, 0)
+    };
     private readonly ComboBox modeSelector = new()
     {
         DropDownStyle = ComboBoxStyle.DropDownList,
@@ -168,7 +174,9 @@ public sealed class MainForm : Form
 
     public MainForm()
     {
-        Text = "Drag Strip Controller";
+        string displayVersion = BuildIdentity.Current;
+        Text = $"Drag Strip Controller {displayVersion}";
+        versionLabel.Text = displayVersion;
         MinimumSize = new Size(900, 430);
         Size = new Size(1100, 500);
         StartPosition = FormStartPosition.CenterScreen;
@@ -739,10 +747,13 @@ public sealed class MainForm : Form
             Dock = DockStyle.Fill,
             AutoSize = true,
             ColumnCount = 2,
+            RowCount = 2,
             Padding = new Padding(16, 12, 16, 8)
         };
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         panel.Controls.Add(new Label
         {
             Text = "Race Control",
@@ -751,6 +762,7 @@ public sealed class MainForm : Form
             ForeColor = Color.FromArgb(35, 45, 55)
         }, 0, 0);
         panel.Controls.Add(settingsSummaryLabel, 1, 0);
+        panel.Controls.Add(versionLabel, 0, 1);
         return panel;
     }
 

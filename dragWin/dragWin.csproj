@@ -6,6 +6,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>DragWin</RootNamespace>
+    <Version>0.5.0-beta.1</Version>
+    <AssemblyVersion>0.5.0.0</AssemblyVersion>
+    <FileVersion>0.5.0.0</FileVersion>
+    <InformationalVersion>0.05.0-beta.1</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <DisplayVersion>v0.05.0-beta.1</DisplayVersion>
     <!-- SQLite 7 lists Alpine RIDs that are irrelevant to this Windows-only app. -->
     <NoWarn>$(NoWarn);NETSDK1206</NoWarn>
   </PropertyGroup>
@@ -37,5 +43,24 @@
     <Error
       Condition="!Exists('$(_ExpectedFirmwarePackage)')"
       Text="Build DragMC $(_DragMcFirmwareVersion) with tools\Build-ControllerFirmware.ps1 before publishing DragWin." />
+  </Target>
+
+  <Target Name="AddGitBuildDescription" BeforeTargets="GetAssemblyAttributes">
+    <PropertyGroup>
+      <GitBuildDescription>$(DisplayVersion)</GitBuildDescription>
+      <GitBuildDescription Condition="'$(GitBuildDescriptionOverride)' != ''">$(GitBuildDescriptionOverride)</GitBuildDescription>
+    </PropertyGroup>
+    <Exec
+      Command="git describe --tags --always --long --dirty"
+      ConsoleToMSBuild="true"
+      IgnoreExitCode="true"
+      StandardOutputImportance="Low"
+      WorkingDirectory="$(MSBuildProjectDirectory)\.."
+      Condition="Exists('$(MSBuildProjectDirectory)\..\.git') and '$(GitBuildDescriptionOverride)' == ''">
+      <Output TaskParameter="ConsoleOutput" PropertyName="GitBuildDescription" />
+    </Exec>
+    <ItemGroup>
+      <AssemblyMetadata Include="GitBuildDescription" Value="$(GitBuildDescription)" />
+    </ItemGroup>
   </Target>
 </Project>
