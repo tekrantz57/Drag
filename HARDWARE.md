@@ -195,6 +195,36 @@ amber 3, green, and red.
 | 3 | 36 | 37 | 38 | 39 | 40 | 41 | 42 |
 | 4 | 43 | 44 | 45 | 46 | 47 | 48 | 49 |
 
+### One-lane Tree Prototype
+
+The first pegboard prototype uses lane 1 only. Obtain seven 470 ohm, 1/4 watt
+resistors and use one separate resistor for each LED. Do not share one resistor
+among multiple LEDs.
+
+Wire each output as follows:
+
+```text
+D22 -> 470 ohm -> Pre-stage LED anode -> LED cathode -> GND
+D23 -> 470 ohm -> Stage LED anode     -> LED cathode -> GND
+D24 -> 470 ohm -> Amber 1 LED anode   -> LED cathode -> GND
+D25 -> 470 ohm -> Amber 2 LED anode   -> LED cathode -> GND
+D26 -> 470 ohm -> Amber 3 LED anode   -> LED cathode -> GND
+D27 -> 470 ohm -> Green LED anode     -> LED cathode -> GND
+D28 -> 470 ohm -> Red LED anode       -> LED cathode -> GND
+```
+
+On a typical discrete LED, the longer lead is the anode. The shorter lead and
+flat side of the body identify the cathode. The resistor may physically be on
+either side of its LED as long as it remains in series. Firmware output `HIGH`
+turns the corresponding light on.
+
+With 470 ohm resistors, ordinary 5 V indicator LEDs draw approximately 4 to
+6 mA each. The one-lane prototype can therefore be driven directly from the
+Mega without a separate LED supply or driver IC. This advice applies to
+individual indicator LEDs, not 12 V lamps, LED strips, or modules with unknown
+internal wiring. Use transistor or ULN2803A drivers and a separate supply before
+expanding to a complete four-lane tree.
+
 ## Two-lane Mode
 
 Two-lane mode uses physical lanes 1 and 4. Lanes 2 and 3 are ignored and their
