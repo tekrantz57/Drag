@@ -33,6 +33,7 @@ public sealed class MainForm : Form
     private readonly ToolStripMenuItem statusMenuItem = new("Request controller status") { Enabled = false };
     private readonly ToolStripMenuItem resetMenuItem = new("Reset controller") { Enabled = false };
     private readonly ToolStripMenuItem testSensorsMenuItem = new("Sensor test...") { Enabled = false };
+    private readonly ToolStripMenuItem testLightsMenuItem = new("Light tree test...") { Enabled = false };
     private readonly ToolStripMenuItem protocolLogMenuItem = new("Controller activity...");
     private readonly ToolStripMenuItem demoPracticeMenuItem = new("Generate demo practice run");
     private readonly ComboBox portSelector = new()
@@ -250,6 +251,7 @@ public sealed class MainForm : Form
         statusMenuItem.Click += (_, _) => SendCommand("STATUS");
         resetMenuItem.Click += (_, _) => ResetController();
         testSensorsMenuItem.Click += (_, _) => ShowSensorTest();
+        testLightsMenuItem.Click += (_, _) => ShowLightTreeTest();
         protocolLogMenuItem.Click += (_, _) => ShowControllerActivity();
         demoPracticeMenuItem.Click += (_, _) => DemoPracticeRun();
         modeSelector.SelectedIndexChanged += (_, _) =>
@@ -310,6 +312,7 @@ public sealed class MainForm : Form
             statusMenuItem,
             new ToolStripSeparator(),
             testSensorsMenuItem,
+            testLightsMenuItem,
             resetMenuItem,
             new ToolStripSeparator(),
             protocolLogMenuItem
@@ -1575,6 +1578,34 @@ public sealed class MainForm : Form
         form.ShowDialog(this);
     }
 
+    private void ShowLightTreeTest()
+    {
+        if (!client.IsConnected)
+        {
+            MessageBox.Show(
+                this,
+                "Connect to the Mega before opening the light tree test.",
+                "Light Tree Test",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+            return;
+        }
+
+        if (client.CurrentControllerIdentity?.ProtocolVersion < LightTreeTestForm.RequiredProtocolVersion)
+        {
+            MessageBox.Show(
+                this,
+                "Light tree testing requires controller firmware 0.6.4 or newer. Use File > Update Controller Firmware, then try again.",
+                "Controller Update Required",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+            return;
+        }
+
+        using var form = new LightTreeTestForm(client);
+        form.ShowDialog(this);
+    }
+
     private void ShowControllerActivity()
     {
         if (controllerActivityForm is { IsDisposed: false })
@@ -1732,6 +1763,7 @@ public sealed class MainForm : Form
         statusMenuItem.Enabled = connected;
         resetMenuItem.Enabled = connected;
         testSensorsMenuItem.Enabled = connected && controllerReady;
+        testLightsMenuItem.Enabled = connected && controllerReady;
         modeSelector.Enabled = true;
         laneCountSelector.Enabled = true;
         treeModeSelector.Enabled = true;
@@ -1753,6 +1785,7 @@ public sealed class MainForm : Form
         controllerReady = true;
         startPracticeButton.Enabled = true;
         testSensorsMenuItem.Enabled = true;
+        testLightsMenuItem.Enabled = true;
         RememberConnectedControllerPort();
     }
 

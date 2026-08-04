@@ -195,6 +195,12 @@ amber 3, green, and red.
 | 3 | 36 | 37 | 38 | 39 | 40 | 41 | 42 |
 | 4 | 43 | 44 | 45 | 46 | 47 | 48 | 49 |
 
+The Mega's D22-D53 double-row header begins with two +5V positions before
+D22/D23. Follow the board's printed pin labels instead of counting from the end
+of the connector. Connecting the first two tree LEDs to that +5V pair makes
+them remain on continuously; an offset connection can also leave another light
+permanently off.
+
 ### One-lane Tree Prototype
 
 The first pegboard prototype uses lane 1 only. Obtain seven 470 ohm, 1/4 watt
@@ -212,6 +218,30 @@ D26 -> 470 ohm -> Amber 3 LED anode   -> LED cathode -> GND
 D27 -> 470 ohm -> Green LED anode     -> LED cathode -> GND
 D28 -> 470 ohm -> Red LED anode       -> LED cathode -> GND
 ```
+
+After installing controller firmware 0.6.4 or newer, use **Diagnostics > Light
+tree test...** to select a physical lane, switch each output individually, or
+run all seven outputs in order. Closing the window turns every test output off;
+lights otherwise retain their selected state until **All Off**, controller
+reset, or power removal, including if serial communication is lost.
+
+### Lane 1 Tree and Practice Validation
+
+On August 4, 2026, the lane 1 pegboard tree was tested with controller firmware
+0.6.4. **Diagnostics > Light tree test...** successfully switched D22 through
+D28 individually and ran the complete seven-output diagnostic sequence. The
+test initially exposed two LEDs connected to the header's +5V positions and an
+incorrect D24 connection; correcting those three jumpers made every output
+respond as expected.
+
+A subsequent lane 1 practice test used the physical pre-stage sensor on A0 and
+stage sensor on A1. With only lane 1 participating, blocking both beams armed
+the start and produced the normal Tree sequence. Releasing stage before green
+produced a red-light foul, while holding stage until green and then releasing
+it produced a legal green-light launch. This validates the lane-selection,
+physical staging inputs, staged delay, Tree output sequence, and immediate foul
+detection together. Speed-trap and finish inputs are still required to complete
+a pass rather than eventually report a DNF.
 
 On a typical discrete LED, the longer lead is the anode. The shorter lead and
 flat side of the body identify the cathode. The resistor may physically be on

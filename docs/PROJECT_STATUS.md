@@ -21,6 +21,11 @@ development builds.
 - Lane 1 wiring for pre-stage, stage, speed trap, and finish.
 - Sensor Test validation of all four lane 1 inputs.
 - Multiple complete lane 1 passes using cardboard to interrupt the beams.
+- Lane 1 pegboard Tree validation of all seven outputs, D22 through D28, using
+  individual light controls and the automatic diagnostic sequence.
+- One-lane physical practice-start validation using A0 pre-stage and A1 stage,
+  including the normal Tree sequence, a legal green launch, and an early-stage
+  release producing a red-light foul.
 - In-app Mega firmware download tooling, upload, reconnect, and identity check.
 - Self-contained x64 operation under Wine 11 on Intel Linux.
 - Native Windows ARM64 operation under ARM64 Wine 11 on a Rock 5B.
@@ -47,5 +52,5 @@ components, routed mounting pockets, or both.
 - Production tournament operation and feedback from additional operators.
 
 The current Mega firmware uses approximately 81 percent of its 8 KB SRAM
-(6,656 bytes, leaving 1,536 bytes for local variables).
+(6,689 bytes, leaving 1,503 bytes for local variables).
 Reassess memory after all 24 sensor inputs are installed and exercised.

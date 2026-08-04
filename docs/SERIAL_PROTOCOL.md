@@ -69,6 +69,10 @@ accepts a later stage blockage even after the pre-stage beam has cleared.
 - `SENSOR_DIAGNOSTICS`
 - `SENSOR_MONITOR:START`
 - `SENSOR_MONITOR:STOP`
+- `LIGHT_TEST:START`
+- `LIGHT_TEST:SET:<lane>:<PRESTAGE|STAGE|AMBER_1|AMBER_2|AMBER_3|GREEN|RED>:<0|1>`
+- `LIGHT_TEST:OFF`
+- `LIGHT_TEST:STOP`
 - `RESET_SENSOR_DIAGNOSTICS`
 - `RESET`
 - `SET:LANES:<2|4>`
@@ -94,6 +98,10 @@ accepted only outside staging and an active race.
 - `ACK:RESET`
 - `ACK:SENSOR_MONITOR:START`
 - `ACK:SENSOR_MONITOR:STOP`
+- `ACK:LIGHT_TEST:START`
+- `ACK:LIGHT_TEST:SET:<lane>:<light>:<0|1>`
+- `ACK:LIGHT_TEST:OFF`
+- `ACK:LIGHT_TEST:STOP`
 - `ACK:RESET_SENSOR_DIAGNOSTICS`
 - `ACK:SET:LANES:<2|4>`
 - `ACK:SET:HEAT_LANES:<comma-separated-physical-lanes>`
@@ -134,6 +142,7 @@ accepted only outside staging and an active race.
 - `ERROR:CHECKSUM`
 - `ERROR:COMMAND:<command>`
 - `ERROR:STATE:RACE_ACTIVE`
+- `ERROR:STATE:LIGHT_TEST_INACTIVE`
 - `ERROR:VALUE:<setting>`
 
 `EVENT` and `RESULT` frames include trailing metadata:
@@ -160,6 +169,16 @@ same command renews the three-second lease without repeating the snapshot.
 stream. Diagnostic frames retain four free output-queue positions for
 race-critical traffic, and a pending sensor remains pending until its newest
 state is successfully queued. DragWin renews the lease once per second.
+
+Protocol 8 adds guarded tree-light testing. `LIGHT_TEST:START` is accepted only
+while the controller is waiting for staging and temporarily suspends normal
+staging and race-tree updates. `SET` controls one of the seven outputs for a
+physical lane, while `OFF` clears all 28 tree outputs without leaving test
+mode. Lights retain their commanded state until another `SET`, `OFF`, `STOP`,
+or `RESET` command is received. `STOP` and `RESET` clear all outputs and return
+the controller to normal staging behavior. If serial communication is lost,
+the selected lights remain on; reconnect and send `STOP` or `RESET`, or power
+cycle the controller, to clear them.
 
 `BLOCKED` is the debounced state used by race logic; `RAW` is the immediate
 electrical state. `INSTALLED` is `0` only for optional interval positions that

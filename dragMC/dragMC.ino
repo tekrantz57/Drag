@@ -9,7 +9,7 @@ constexpr uint8_t LIGHTS_PER_LANE = 7;
 constexpr uint8_t SENSORS_PER_LANE = 6;
 constexpr char FIRMWARE_NAME[] = "DRAG_MC";
 constexpr char FIRMWARE_VERSION[] = DRAGMC_FIRMWARE_VERSION;
-constexpr uint8_t PROTOCOL_VERSION = 6;
+constexpr uint8_t PROTOCOL_VERSION = 8;
 
 enum LightIndex : uint8_t {
   PreStageLight,
@@ -235,6 +235,7 @@ uint32_t pendingSensorDiagnosticMask = 0;
 unsigned long sensorMonitorRenewedAtMs = 0;
 uint8_t sensorDiagnosticCursor = 0;
 bool sensorMonitorEnabled = false;
+bool lightTestEnabled = false;
 
 void formatHeatLanes(char* destination, const size_t destinationSize);
 void formatSplitLanes(char* destination, const size_t destinationSize);
@@ -406,6 +407,14 @@ void resetLaneResults() {
   }
 }
 
+void turnOffAllLights() {
+  for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
+    for (uint8_t light = 0; light < LIGHTS_PER_LANE; ++light) {
+      setLaneLight(lane, static_cast<LightIndex>(light), false);
+    }
+  }
+}
+
 const char* raceModeName() {
   return raceMode == RaceMode::HeadsUp ? "HEADS_UP" : "BRACKET";
 }
@@ -542,7 +551,7 @@ bool allLanesAreStaged() {
 }
 
 void updateSequentialStaging() {
-  if (stagingMode != StagingMode::InOrder ||
+  if (lightTestEnabled || stagingMode != StagingMode::InOrder ||
       treeState != TreeState::WaitingForAllLanes) {
     return;
   }
@@ -591,6 +600,7 @@ bool allSensorsAreClear() {
 }
 
 void updateStagingLights() {
+  if (lightTestEnabled) return;
   for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
     const bool active = laneParticipates(lane);
     setLaneLight(
@@ -1110,6 +1120,104 @@ void updateSensorMonitor(const unsigned long nowMs) {
   pendingSensorDiagnosticMask = 0;
 }
 
+bool tryParseLightName(const char* value, LightIndex& light) {
+  if (strcmp_P(value, PSTR("PRESTAGE")) == 0) {
+    light = PreStageLight;
+  } else if (strcmp_P(value, PSTR("STAGE")) == 0) {
+    light = StageLight;
+  } else if (strcmp_P(value, PSTR("AMBER_1")) == 0) {
+    light = AmberLight1;
+  } else if (strcmp_P(value, PSTR("AMBER_2")) == 0) {
+    light = AmberLight2;
+  } else if (strcmp_P(value, PSTR("AMBER_3")) == 0) {
+    light = AmberLight3;
+  } else if (strcmp_P(value, PSTR("GREEN")) == 0) {
+    light = GreenLight;
+  } else if (strcmp_P(value, PSTR("RED")) == 0) {
+    light = RedLight;
+  } else {
+    return false;
+  }
+  return true;
+}
+
+void stopLightTest(const bool acknowledge) {
+  lightTestEnabled = false;
+  turnOffAllLights();
+  if (acknowledge) sendFlashProtocolMessage(PSTR("ACK:LIGHT_TEST:STOP"));
+}
+
+void processLightTestCommand(char* line) {
+  if (strcmp_P(line, PSTR("LIGHT_TEST:START")) == 0) {
+    if (!lightTestEnabled && treeState != TreeState::WaitingForAllLanes) {
+      sendProtocolMessage("ERROR:STATE:RACE_ACTIVE");
+      return;
+    }
+    if (!lightTestEnabled) {
+      lightTestEnabled = true;
+      turnOffAllLights();
+    }
+    sendFlashProtocolMessage(PSTR("ACK:LIGHT_TEST:START"));
+    return;
+  }
+
+  if (strcmp_P(line, PSTR("LIGHT_TEST:STOP")) == 0) {
+    stopLightTest(true);
+    return;
+  }
+
+  if (!lightTestEnabled) {
+    sendFlashProtocolMessage(PSTR("ERROR:STATE:LIGHT_TEST_INACTIVE"));
+    return;
+  }
+
+  if (strcmp_P(line, PSTR("LIGHT_TEST:OFF")) == 0) {
+    turnOffAllLights();
+    sendFlashProtocolMessage(PSTR("ACK:LIGHT_TEST:OFF"));
+    return;
+  }
+
+  char* savePointer = nullptr;
+  char* command = strtok_r(line, ":", &savePointer);
+  char* operation = strtok_r(nullptr, ":", &savePointer);
+  char* laneText = strtok_r(nullptr, ":", &savePointer);
+  char* lightText = strtok_r(nullptr, ":", &savePointer);
+  char* stateText = strtok_r(nullptr, ":", &savePointer);
+  char* extra = strtok_r(nullptr, ":", &savePointer);
+  if (command == nullptr || operation == nullptr || laneText == nullptr ||
+      lightText == nullptr || stateText == nullptr || extra != nullptr ||
+      strcmp_P(command, PSTR("LIGHT_TEST")) != 0 ||
+      strcmp_P(operation, PSTR("SET")) != 0) {
+    sendFlashProtocolMessage(PSTR("ERROR:COMMAND:LIGHT_TEST"));
+    return;
+  }
+
+  char* laneEnd = nullptr;
+  const long laneNumber = strtol(laneText, &laneEnd, 10);
+  LightIndex light = PreStageLight;
+  if (laneEnd == laneText || *laneEnd != '\0' ||
+      laneNumber < 1 || laneNumber > MAX_LANE_COUNT) {
+    sendFlashProtocolMessage(PSTR("ERROR:VALUE:LIGHT_TEST_LANE"));
+    return;
+  }
+  if (!tryParseLightName(lightText, light)) {
+    sendFlashProtocolMessage(PSTR("ERROR:VALUE:LIGHT_TEST_LIGHT"));
+    return;
+  }
+  if (strcmp(stateText, "0") != 0 && strcmp(stateText, "1") != 0) {
+    sendFlashProtocolMessage(PSTR("ERROR:VALUE:LIGHT_TEST_STATE"));
+    return;
+  }
+
+  setLaneLight(
+      static_cast<uint8_t>(laneNumber - 1), light, stateText[0] == '1');
+  char message[64];
+  snprintf(
+      message, sizeof(message), "ACK:LIGHT_TEST:SET:%ld:%s:%s",
+      laneNumber, lightText, stateText);
+  sendProtocolMessage(message);
+}
+
 void sendSensorDiagnostics() {
   // Compatibility snapshot. Frames are emitted incrementally by the main loop.
   queueSensorDiagnosticSnapshot(false);
@@ -1384,8 +1492,11 @@ void processCommand(char* line) {
     resetSensorDiagnostics();
     sendProtocolMessage("ACK:RESET_SENSOR_DIAGNOSTICS");
   } else if (strcmp(line, "RESET") == 0) {
+    stopLightTest(false);
     sendProtocolMessage("ACK:RESET");
     enterState(TreeState::WaitingForAllLanes, millis());
+  } else if (strncmp_P(line, PSTR("LIGHT_TEST:"), 11) == 0) {
+    processLightTestCommand(line);
   } else if (strncmp(line, "SET:", 4) == 0) {
     processSetCommand(line);
   } else {
@@ -1438,6 +1549,7 @@ void updateSerialCommands() {
 }
 
 void updateTree(const unsigned long nowMs) {
+  if (lightTestEnabled) return;
   switch (treeState) {
     case TreeState::WaitingForAllLanes:
       if (allLanesAreStaged()) enterState(TreeState::StagingHold, nowMs);

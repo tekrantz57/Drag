@@ -35,6 +35,19 @@ Use Sensor Test to inspect each input's raw blocked-edge count and most recent
 blocked-pulse duration. A pulse shorter than the firmware's 2 ms debounce is
 recorded diagnostically but is not accepted as a race transition.
 
+## Tree Lights Stay On Or Off During Light Test
+
+The Mega's D22-D53 double-row header has two +5V positions immediately before
+D22 and D23. Use the labels printed on the board instead of treating the end of
+the connector as D22/D23. LEDs accidentally connected to the +5V pair remain on
+regardless of Light Tree Test commands, while a jumper on the wrong digital pin
+may remain off or respond to a different control.
+
+Confirm questionable outputs by moving a known-working LED and resistor to the
+labeled pin, or measure the pin relative to Mega GND while toggling it. Keep the
+Light Tree Test window open during measurement; after it closes, D22 and D23
+return to their normal pre-stage and stage sensor behavior.
+
 ## Status Or Diagnostic Frames Are Missing
 
 Open Controller Diagnostics or press the appropriate status command in the
