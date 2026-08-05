@@ -178,6 +178,12 @@ public sealed class MainForm : Form
 
     public MainForm()
     {
+        var executableIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+        if (executableIcon is not null)
+        {
+            Icon = executableIcon;
+        }
+
         string displayVersion = BuildIdentity.Current;
         Text = $"Drag Strip Controller {displayVersion}";
         versionLabel.Text = displayVersion;
