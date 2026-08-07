@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace DragWin;
 
@@ -16,6 +17,7 @@ public sealed class AppSettings
     public int[] IntervalTimerLanes { get; set; } = [];
     public bool VoiceAnnouncementsEnabled { get; set; }
     public string SpeechVoiceName { get; set; } = "";
+    public SpeechBackendMode SpeechBackend { get; set; } = SpeechBackendMode.Automatic;
     public bool ExportTournamentJson { get; set; } = true;
     public bool ExportTournamentCsv { get; set; } = true;
 }
@@ -24,7 +26,8 @@ public static class AppSettingsStore
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
-        WriteIndented = true
+        WriteIndented = true,
+        Converters = { new JsonStringEnumConverter() }
     };
 
     public static string DefaultPath => Path.Combine(
@@ -42,7 +45,7 @@ public static class AppSettingsStore
                 return new AppSettings();
             }
 
-            return Normalize(JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(path)));
+            return Normalize(JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(path), JsonOptions));
         }
         catch (Exception exception) when (
             exception is IOException or UnauthorizedAccessException or JsonException)
@@ -97,6 +100,10 @@ public static class AppSettingsStore
             .Order()
             .ToArray();
         settings.SpeechVoiceName = settings.SpeechVoiceName?.Trim() ?? "";
+        if (!Enum.IsDefined(settings.SpeechBackend))
+        {
+            settings.SpeechBackend = SpeechBackendMode.Automatic;
+        }
         return settings;
     }
 }

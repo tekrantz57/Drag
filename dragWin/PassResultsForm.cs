@@ -28,17 +28,20 @@ public sealed class PassResultsForm : Form
     private readonly Dictionary<int, PassLaneResult> currentResults = [];
     private bool voiceAnnouncementsEnabled;
     private string speechVoiceName;
+    private SpeechBackendMode speechBackend;
     private bool passResultAnnounced;
     private int passNumber;
 
     public PassResultsForm(
         DragSerialClient client,
         bool voiceAnnouncementsEnabled,
-        string speechVoiceName)
+        string speechVoiceName,
+        SpeechBackendMode speechBackend)
     {
         this.client = client;
         this.voiceAnnouncementsEnabled = voiceAnnouncementsEnabled;
         this.speechVoiceName = speechVoiceName;
+        this.speechBackend = speechBackend;
         Text = "Practice Pass Results";
         MinimumSize = new Size(980, 420);
         Size = new Size(1280, 560);
@@ -153,10 +156,14 @@ public sealed class PassResultsForm : Form
         Speak(RaceAnnouncementText.PracticeArmed(lanes));
     }
 
-    public void UpdateAnnouncementSettings(bool enabled, string voiceName)
+    public void UpdateAnnouncementSettings(
+        bool enabled,
+        string voiceName,
+        SpeechBackendMode backend)
     {
         voiceAnnouncementsEnabled = enabled;
         speechVoiceName = voiceName;
+        speechBackend = backend;
     }
 
     public void ProcessMessages(IEnumerable<ProtocolMessage> messages)
@@ -322,7 +329,7 @@ public sealed class PassResultsForm : Form
     {
         if (voiceAnnouncementsEnabled)
         {
-            SpeechAnnouncer.SpeakAsync(phrase, speechVoiceName);
+            SpeechAnnouncer.SpeakAsync(phrase, speechVoiceName, speechBackend);
         }
     }
 

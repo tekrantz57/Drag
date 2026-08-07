@@ -14,7 +14,8 @@ development builds.
 - Heads-up and bracket logic, Full and Pro Trees, staging modes, staged delay,
   dial-ins, reaction times, breakouts, placements, fouls, and DNFs.
 - Practice passes, tournaments, lane choice, byes, history, reports, exports,
-  backups, restore, diagnostics, and optional voice announcements.
+  backups, restore, diagnostics, and optional Windows or native Linux voice
+  announcements.
 - Four required and two optional sensor positions per lane throughout firmware,
   protocol, diagnostics, results, persistence, and reports.
 - Firmware-maintained raw edge counts and blocked-pulse durations.
@@ -23,6 +24,8 @@ development builds.
 - Multiple complete lane 1 passes using cardboard to interrupt the beams.
 - Lane 1 pegboard Tree validation of all seven outputs, D22 through D28, using
   individual light controls and the automatic diagnostic sequence.
+- Arduino Due light-tree diagnostic sketch preserving the Mega D22-D49 Tree
+  mapping, with a distinct identity that the Mega firmware updater rejects.
 - One-lane physical practice-start validation using A0 pre-stage and A1 stage,
   including the normal Tree sequence, a legal green launch, and an early-stage
   release producing a red-light foul.
@@ -30,6 +33,8 @@ development builds.
 - Self-contained x64 operation under Wine 11 on Intel Linux.
 - Native Windows ARM64 operation under ARM64 Wine 11 on a Rock 5B.
 - Successful controller firmware updates from both tested Wine environments.
+- Native Linux eSpeak NG helper support for DragWin under Wine, using a
+  loopback-only service and a speech engine selected in Race Settings.
 
 ## Physical Limitation
 
@@ -50,6 +55,8 @@ components, routed mounting pockets, or both.
 - Venue decisions documented in `TODO.md`, including staging timeout and DNF
   advancement behavior.
 - Production tournament operation and feedback from additional operators.
+- Live native-Linux speech validation with DragWin under Wine. The equivalent
+  YATSS helper protocol has been verified on ARM64 Wine 11.
 
 The current Mega firmware uses approximately 81 percent of its 8 KB SRAM
 (6,689 bytes, leaving 1,503 bytes for local variables).

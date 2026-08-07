@@ -23,6 +23,7 @@ public sealed class TournamentRunnerForm : Form
     private readonly HashSet<int> splitSensorLanes;
     private readonly bool voiceAnnouncementsEnabled;
     private readonly string speechVoiceName;
+    private readonly SpeechBackendMode speechBackend;
     private readonly TournamentReportExportOptions reportExportOptions;
     private readonly TournamentPlanner planner = new();
     private readonly Label heading = new()
@@ -131,6 +132,7 @@ public sealed class TournamentRunnerForm : Form
         IReadOnlyCollection<int> splitSensorLanes,
         bool voiceAnnouncementsEnabled,
         string speechVoiceName,
+        SpeechBackendMode speechBackend,
         TournamentReportExportOptions reportExportOptions)
     {
         this.tournament = tournament;
@@ -141,6 +143,7 @@ public sealed class TournamentRunnerForm : Form
         this.splitSensorLanes = splitSensorLanes.ToHashSet();
         this.voiceAnnouncementsEnabled = voiceAnnouncementsEnabled;
         this.speechVoiceName = speechVoiceName;
+        this.speechBackend = speechBackend;
         this.reportExportOptions = reportExportOptions;
         Text = $"Run Tournament - {tournament.Name}";
         MinimumSize = new Size(980, 680);
@@ -1171,7 +1174,7 @@ public sealed class TournamentRunnerForm : Form
     {
         if (voiceAnnouncementsEnabled)
         {
-            SpeechAnnouncer.SpeakAsync(phrase, speechVoiceName);
+            SpeechAnnouncer.SpeakAsync(phrase, speechVoiceName, speechBackend);
         }
     }
 

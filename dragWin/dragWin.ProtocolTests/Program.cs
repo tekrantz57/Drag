@@ -72,6 +72,7 @@ try
         IntervalTimerLanes = [1, 4],
         VoiceAnnouncementsEnabled = true,
         SpeechVoiceName = "Test Voice",
+        SpeechBackend = SpeechBackendMode.LinuxHelper,
         ExportTournamentJson = false,
         ExportTournamentCsv = true
     }, settingsPath);
@@ -85,12 +86,33 @@ try
     AssertEqual(4, loadedSettings.IntervalTimerLanes[1]);
     AssertEqual(true, loadedSettings.VoiceAnnouncementsEnabled);
     AssertEqual("Test Voice", loadedSettings.SpeechVoiceName);
+    AssertEqual(SpeechBackendMode.LinuxHelper, loadedSettings.SpeechBackend);
     AssertEqual(false, loadedSettings.ExportTournamentJson);
     AssertEqual(true, loadedSettings.ExportTournamentCsv);
 }
 finally
 {
     File.Delete(settingsPath);
+}
+
+var legacySettingsPath = Path.Combine(
+    Path.GetTempPath(), $"dragWin-legacy-settings-{Guid.NewGuid():N}.json");
+try
+{
+    File.WriteAllText(legacySettingsPath, """
+        {
+          "RaceMode": "HEADS_UP",
+          "VoiceAnnouncementsEnabled": true,
+          "SpeechVoiceName": "Legacy Voice"
+        }
+        """);
+    var legacySettings = AppSettingsStore.Load(legacySettingsPath);
+    AssertEqual("HEADS_UP", legacySettings.RaceMode);
+    AssertEqual(SpeechBackendMode.Automatic, legacySettings.SpeechBackend);
+}
+finally
+{
+    File.Delete(legacySettingsPath);
 }
 var eventWithMetadata = ProtocolMessage.Create(
     "EVENT", "LANE", "1", "GREEN", "SEQ", "42", "MS", "123456").Encode();
@@ -147,6 +169,17 @@ Assert(controllerIdentity.IsExpectedDragMc("0.6.4"),
     "The expected DragMC identity should verify.");
 Assert(!controllerIdentity.IsExpectedDragMc("0.6.0"),
     "A different firmware version must not verify.");
+
+var dueLightTestIdentityMessage = ProtocolMessage.Create(
+    "HELLO", "DRAG_MC_DUE_LIGHT_TEST", "0.1.0", "PROTO", "8", "MCU", "SAM3X8E",
+    "LANES", "4", "HEAT_LANES", "1,2,3,4");
+Assert(ControllerIdentity.TryParse(dueLightTestIdentityMessage, out var dueLightTestIdentity),
+    "The Due light-test sketch should produce a structured controller identity.");
+AssertEqual("DRAG_MC_DUE_LIGHT_TEST", dueLightTestIdentity!.Product);
+AssertEqual(8, dueLightTestIdentity.ProtocolVersion);
+AssertEqual("SAM3X8E", dueLightTestIdentity.Mcu);
+Assert(!dueLightTestIdentity.IsExpectedDragMc("0.6.4"),
+    "The Mega firmware updater must reject the Due diagnostic identity.");
 
 var firmwarePackagePath = FindRepositoryFile(
     Path.Combine("dragMC", "dist", "DragMC-mega-0.6.4.dragfw"));

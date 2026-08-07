@@ -67,9 +67,10 @@ selection, validation, recovery boundaries, and Wine results.
 
 ## Voice Is Unavailable Under Wine
 
-Voice announcements depend on SAPI voices installed in the Wine prefix. Speech
-is optional and disabled by default; unavailable speech must not affect race
-timing or controller operation.
+DragWin can use SAPI voices installed in the Wine prefix or the packaged native
+Linux eSpeak NG helper. See [Linux Speech Under Wine](LINUX_SPEECH.md) for
+installation, engine selection, and diagnostics. Speech is optional and an
+unavailable engine does not affect race timing or controller operation.
 
 ## Sharing Diagnostics
 

@@ -26,7 +26,8 @@ tournaments, reports, diagnostics, backups, and controller firmware updates.
 - HTML reports with optional JSON and CSV exports.
 - Verified manual restore, daily automatic backups, and pre-upgrade safety
   backups.
-- Optional SAPI voice announcements, disabled by default.
+- Optional Windows SAPI or native Linux voice announcements, disabled by
+  default.
 - In-app installation of the bundled DragMC firmware through the Mega's normal
   USB bootloader.
 
@@ -79,6 +80,9 @@ dragMC/                             Arduino Mega firmware
   FirmwareVersion.h                 controller firmware identity
   dist/                             matching DragMC firmware package
 
+dragMCDueLightTest/                 Arduino Due Tree-output diagnostic
+  dragMCDueLightTest.ino            light-test-only Due sketch
+
 dragWin/                            .NET 10 Windows Forms application
   dragWin.sln                       solution
   dragWin.ProtocolTests/            lightweight integration test runner
@@ -120,6 +124,8 @@ sharing any diagnostic material.
 - [Hardware and wiring](HARDWARE.md)
 - [Tournament behavior](docs/TOURNAMENTS.md)
 - [Controller firmware updates](docs/CONTROLLER_FIRMWARE_UPDATE.md)
+- [Linux speech under Wine](docs/LINUX_SPEECH.md)
+- [Arduino Due light-tree diagnostic](dragMCDueLightTest/README.md)
 - [Serial protocol](docs/SERIAL_PROTOCOL.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Engineering backlog](TODO.md)

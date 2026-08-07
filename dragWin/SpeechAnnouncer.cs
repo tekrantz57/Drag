@@ -7,50 +7,45 @@ public static class SpeechAnnouncer
     private static readonly object SyncRoot = new();
     private static BlockingCollection<SpeechRequest>? requests;
 
-    public static IReadOnlyList<string> GetInstalledVoices()
+    public static IReadOnlyList<string> GetInstalledVoices(SpeechBackendMode backendMode)
     {
-        var voices = new List<string>();
         try
         {
-            var voiceType = Type.GetTypeFromProgID("SAPI.SpVoice");
-            dynamic? voice = voiceType is null ? null : Activator.CreateInstance(voiceType);
-            if (voice is null)
-            {
-                return voices;
-            }
-
-            dynamic installedVoices = voice.GetVoices();
-            for (var index = 0; index < installedVoices.Count; index++)
-            {
-                string? description = installedVoices.Item(index).GetDescription();
-                if (!string.IsNullOrWhiteSpace(description))
-                {
-                    voices.Add(description);
-                }
-            }
+            using var backend = SpeechBackendFactory.Create(backendMode);
+            return backend?.GetVoices() ?? Array.Empty<string>();
         }
         catch
         {
-            // Speech is optional and unavailable SAPI components must not affect racing.
+            return Array.Empty<string>();
         }
-
-        return voices;
     }
 
-    public static void WarmUpAsync(string voiceName) => Queue("", voiceName);
+    public static void WarmUpAsync(string voiceName, SpeechBackendMode backendMode) =>
+        Queue("", voiceName, backendMode);
 
-    public static void SpeakAsync(string phrase, string voiceName)
+    public static void SpeakAsync(
+        string phrase,
+        string voiceName,
+        SpeechBackendMode backendMode)
     {
-        if (!string.IsNullOrWhiteSpace(phrase))
+        if (!string.IsNullOrWhiteSpace(phrase) && backendMode != SpeechBackendMode.None)
         {
-            Queue(phrase, voiceName);
+            Queue(phrase, voiceName, backendMode);
         }
     }
 
-    private static void Queue(string phrase, string voiceName)
+    private static void Queue(
+        string phrase,
+        string voiceName,
+        SpeechBackendMode backendMode)
     {
+        if (backendMode == SpeechBackendMode.None)
+        {
+            return;
+        }
+
         EnsureStarted();
-        requests?.TryAdd(new SpeechRequest(phrase, voiceName));
+        requests?.TryAdd(new SpeechRequest(phrase, voiceName, backendMode));
     }
 
     private static void EnsureStarted()
@@ -75,66 +70,45 @@ public static class SpeechAnnouncer
 
     private static void RunWorker(BlockingCollection<SpeechRequest> speechRequests)
     {
-        dynamic? voice = null;
+        ISpeechBackend? backend = null;
+        SpeechBackendMode? activeBackendMode = null;
         var activeVoiceName = "";
         foreach (var request in speechRequests.GetConsumingEnumerable())
         {
             try
             {
-                voice ??= CreateVoice();
-                if (voice is null)
+                var resetToDefaultVoice =
+                    !string.IsNullOrWhiteSpace(activeVoiceName) &&
+                    string.IsNullOrWhiteSpace(request.VoiceName);
+                if (backend is null ||
+                    activeBackendMode != request.BackendMode ||
+                    resetToDefaultVoice)
                 {
-                    continue;
+                    backend?.Dispose();
+                    backend = SpeechBackendFactory.Create(request.BackendMode);
+                    activeBackendMode = request.BackendMode;
                 }
 
-                if (!string.Equals(
-                        activeVoiceName,
-                        request.VoiceName,
-                        StringComparison.OrdinalIgnoreCase))
-                {
-                    if (string.IsNullOrWhiteSpace(request.VoiceName))
-                    {
-                        voice = CreateVoice() ?? voice;
-                    }
-                    else
-                    {
-                        ApplyVoice(voice, request.VoiceName);
-                    }
-                    activeVoiceName = request.VoiceName;
-                }
+                activeVoiceName = request.VoiceName;
 
-                if (!string.IsNullOrWhiteSpace(request.Phrase))
+                if (backend is not null && !string.IsNullOrWhiteSpace(request.Phrase))
                 {
-                    voice.Speak(request.Phrase);
+                    backend.Speak(request.Phrase, request.VoiceName);
                 }
             }
             catch
             {
-                // Announcements must never interrupt race control or the operator UI.
+                backend?.Dispose();
+                backend = null;
+                activeVoiceName = "";
             }
         }
+
+        backend?.Dispose();
     }
 
-    private static dynamic? CreateVoice()
-    {
-        var voiceType = Type.GetTypeFromProgID("SAPI.SpVoice");
-        return voiceType is null ? null : Activator.CreateInstance(voiceType);
-    }
-
-    private static void ApplyVoice(dynamic voice, string voiceName)
-    {
-        dynamic installedVoices = voice.GetVoices();
-        for (var index = 0; index < installedVoices.Count; index++)
-        {
-            dynamic candidate = installedVoices.Item(index);
-            string? description = candidate.GetDescription();
-            if (string.Equals(description, voiceName, StringComparison.OrdinalIgnoreCase))
-            {
-                voice.Voice = candidate;
-                return;
-            }
-        }
-    }
-
-    private sealed record SpeechRequest(string Phrase, string VoiceName);
+    private sealed record SpeechRequest(
+        string Phrase,
+        string VoiceName,
+        SpeechBackendMode BackendMode);
 }

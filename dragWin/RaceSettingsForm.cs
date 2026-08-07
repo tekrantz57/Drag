@@ -34,6 +34,11 @@ public sealed class RaceSettingsForm : Form
     private readonly NumericUpDown[] dialInputs = new NumericUpDown[PhysicalLaneCount];
     private readonly CheckBox[] intervalTimerChecks = new CheckBox[PhysicalLaneCount];
     private readonly CheckBox voiceAnnouncementsCheck = new() { Text = "Enabled", AutoSize = true };
+    private readonly ComboBox speechBackendSelector = new()
+    {
+        DropDownStyle = ComboBoxStyle.DropDownList,
+        Dock = DockStyle.Fill
+    };
     private readonly ComboBox speechVoiceSelector = new()
     {
         DropDownStyle = ComboBoxStyle.DropDownList,
@@ -68,6 +73,7 @@ public sealed class RaceSettingsForm : Form
         IReadOnlyCollection<int> intervalTimerLanes,
         bool voiceAnnouncementsEnabled,
         string speechVoiceName,
+        SpeechBackendMode speechBackend,
         bool exportTournamentJson,
         bool exportTournamentCsv,
         bool controllerConnected)
@@ -94,6 +100,7 @@ public sealed class RaceSettingsForm : Form
         exportJsonCheck.Checked = exportTournamentJson;
         exportCsvCheck.Checked = exportTournamentCsv;
         voiceAnnouncementsCheck.Checked = voiceAnnouncementsEnabled;
+        LoadSpeechBackends(speechBackend);
         LoadSpeechVoices(speechVoiceName);
 
         var tabs = new TabControl { Dock = DockStyle.Fill };
@@ -149,8 +156,16 @@ public sealed class RaceSettingsForm : Form
         modeSelector.SelectedIndexChanged += (_, _) => UpdateDialState();
         laneCountSelector.SelectedIndexChanged += (_, _) => UpdateDialState();
         voiceAnnouncementsCheck.CheckedChanged += (_, _) => UpdateVoiceState();
+        speechBackendSelector.SelectedIndexChanged += (_, _) =>
+        {
+            LoadSpeechVoices(SpeechVoiceName);
+            UpdateVoiceState();
+        };
         testVoiceButton.Click += (_, _) =>
-            SpeechAnnouncer.SpeakAsync("Drag strip announcements are ready.", SpeechVoiceName);
+            SpeechAnnouncer.SpeakAsync(
+                "Drag strip announcements are ready.",
+                SpeechVoiceName,
+                SpeechBackend);
         FormClosing += ValidateBeforeClosing;
         UpdateDialState();
         UpdateVoiceState();
@@ -170,6 +185,10 @@ public sealed class RaceSettingsForm : Form
         .Select(item => item.lane)
         .ToArray();
     public bool VoiceAnnouncementsEnabled => voiceAnnouncementsCheck.Checked;
+    public SpeechBackendMode SpeechBackend =>
+        speechBackendSelector.SelectedItem is SpeechBackendOption option
+            ? option.Mode
+            : SpeechBackendMode.Automatic;
     public string SpeechVoiceName => speechVoiceSelector.SelectedIndex <= 0
         ? ""
         : speechVoiceSelector.SelectedItem?.ToString()?.Trim() ?? "";
@@ -266,24 +285,38 @@ public sealed class RaceSettingsForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 3,
-            RowCount = 3,
+            RowCount = 4,
             Padding = new Padding(14)
         };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         AddSettingRow(layout, 0, "Voice announcements", voiceAnnouncementsCheck);
-        AddSettingRow(layout, 1, "Windows voice", speechVoiceSelector);
-        layout.Controls.Add(testVoiceButton, 1, 2);
+        AddSettingRow(layout, 1, "Engine", speechBackendSelector);
+        AddSettingRow(layout, 2, "Voice", speechVoiceSelector);
+        layout.Controls.Add(testVoiceButton, 1, 3);
         tab.Controls.Add(layout);
         return tab;
+    }
+
+    private void LoadSpeechBackends(SpeechBackendMode selectedBackend)
+    {
+        speechBackendSelector.Items.AddRange([
+            new SpeechBackendOption(SpeechBackendMode.Automatic, "Automatic"),
+            new SpeechBackendOption(SpeechBackendMode.WindowsSapi, "Windows SAPI"),
+            new SpeechBackendOption(SpeechBackendMode.LinuxHelper, "Linux helper"),
+            new SpeechBackendOption(SpeechBackendMode.None, "None")
+        ]);
+        speechBackendSelector.SelectedItem = speechBackendSelector.Items
+            .Cast<SpeechBackendOption>()
+            .First(option => option.Mode == selectedBackend);
     }
 
     private void LoadSpeechVoices(string selectedVoice)
     {
         speechVoiceSelector.Items.Clear();
-        speechVoiceSelector.Items.Add("Windows default");
-        foreach (var voiceName in SpeechAnnouncer.GetInstalledVoices())
+        speechVoiceSelector.Items.Add("Default voice");
+        foreach (var voiceName in SpeechAnnouncer.GetInstalledVoices(SpeechBackend))
         {
             speechVoiceSelector.Items.Add(voiceName);
         }
@@ -293,14 +326,22 @@ public sealed class RaceSettingsForm : Form
             speechVoiceSelector.Items.Add(selectedVoice);
         }
         speechVoiceSelector.SelectedItem = string.IsNullOrWhiteSpace(selectedVoice)
-            ? "Windows default"
+            ? "Default voice"
             : selectedVoice;
     }
 
     private void UpdateVoiceState()
     {
-        speechVoiceSelector.Enabled = voiceAnnouncementsCheck.Checked;
-        testVoiceButton.Enabled = voiceAnnouncementsCheck.Checked;
+        speechBackendSelector.Enabled = voiceAnnouncementsCheck.Checked;
+        var speechEnabled = voiceAnnouncementsCheck.Checked &&
+            SpeechBackend != SpeechBackendMode.None;
+        speechVoiceSelector.Enabled = speechEnabled;
+        testVoiceButton.Enabled = speechEnabled;
+    }
+
+    private sealed record SpeechBackendOption(SpeechBackendMode Mode, string DisplayName)
+    {
+        public override string ToString() => DisplayName;
     }
 
     private static void AddSettingRow(
