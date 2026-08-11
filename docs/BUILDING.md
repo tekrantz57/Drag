@@ -26,6 +26,7 @@ dotnet restore dragWin\dragWin.sln
 dotnet build dragWin\dragWin.sln -c Release --no-restore
 dotnet run --project dragWin\dragWin.ProtocolTests\dragWin.ProtocolTests.csproj -c Release --no-build
 dotnet format dragWin\dragWin.sln --verify-no-changes --no-restore
+python -m unittest tools\test_drag_speech_helper.py
 ```
 
 Run DragWin from source with:
@@ -70,7 +71,9 @@ dotnet publish dragWin\dragWin.csproj -c Release -r win-arm64 `
 ```
 
 Keep the complete publish directory together. DragWin expects its .NET runtime,
-native SQLite library, and `Firmware` directory to remain beside the executable.
+native SQLite library, `Firmware` directory, and packaged
+`Linux/drag-speech-helper.py` to remain beside the executable. Piper itself and
+voice models are optional external installations and are not published by Drag.
 
 ## Clean-Clone Check
 

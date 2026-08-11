@@ -41,3 +41,17 @@ tool cache.
   <https://github.com/avrdudes/avrdude>
 - Official Arduino tool downloads:
   <https://downloads.arduino.cc/>
+
+## Optional Speech Engines
+
+DragWin interoperates with optional speech engines but does not redistribute
+them or their voice data.
+
+- Piper is GPL-3.0-or-later and is installed separately from DragWin.
+  <https://github.com/OHF-Voice/piper1-gpl>
+- eSpeak NG is GPL-3.0-or-later and is supplied by the operator's Linux
+  distribution.
+  <https://github.com/espeak-ng/espeak-ng>
+
+Piper voice models have individual licenses. Review the model's `MODEL_CARD`
+before redistribution.

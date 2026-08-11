@@ -1,6 +1,9 @@
 using DragWin;
 using System.IO.Compression;
+using System.Net;
+using System.Net.Sockets;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 
 AssertEqual(
@@ -114,6 +117,85 @@ finally
 {
     File.Delete(legacySettingsPath);
 }
+
+using (var speechListener = new TcpListener(IPAddress.Loopback, 0))
+{
+    speechListener.Start();
+    var speechPort = ((IPEndPoint)speechListener.LocalEndpoint).Port;
+    var speechServer = Task.Run(async () =>
+    {
+        for (var requestNumber = 0; requestNumber < 4; requestNumber++)
+        {
+            using var connection = await speechListener.AcceptTcpClientAsync();
+            using var stream = connection.GetStream();
+            using var reader = new StreamReader(stream, Encoding.UTF8, leaveOpen: true);
+            using var writer = new StreamWriter(
+                stream,
+                new UTF8Encoding(false),
+                leaveOpen: true)
+            {
+                AutoFlush = true,
+                NewLine = "\n"
+            };
+            using var request = JsonDocument.Parse((await reader.ReadLineAsync())!);
+            var command = request.RootElement.GetProperty("command").GetString();
+            if (command == "ping")
+            {
+                await writer.WriteLineAsync("{\"ok\":true}");
+            }
+            else if (command == "voices")
+            {
+                await writer.WriteLineAsync(
+                    "{\"ok\":true,\"voices\":[\"voice-b\",\"voice-a\"]}");
+            }
+            else if (command == "warmup")
+            {
+                AssertEqual("voice-a", request.RootElement.GetProperty("voice").GetString());
+                await writer.WriteLineAsync("{\"ok\":true}");
+            }
+            else
+            {
+                AssertEqual("speak", command);
+                AssertEqual(
+                    "Drag speech protocol test",
+                    request.RootElement.GetProperty("text").GetString());
+                AssertEqual("voice-a", request.RootElement.GetProperty("voice").GetString());
+                await writer.WriteLineAsync("{\"ok\":true}");
+            }
+        }
+    });
+
+    var speechClient = new SpeechHelperClient(speechPort);
+    Assert(speechClient.Ping(), "Speech client should ping a running helper.");
+    Assert(
+        speechClient.GetVoices().SequenceEqual(["voice-a", "voice-b"]),
+        "Speech client should discover and sort helper voices.");
+    speechClient.WarmUp("voice-a");
+    speechClient.Speak("Drag speech protocol test", "voice-a");
+    await speechServer;
+}
+
+if (string.Equals(
+        Environment.GetEnvironmentVariable("DRAG_TEST_PIPER"),
+        "1",
+        StringComparison.Ordinal))
+{
+    using var piper = PiperSpeechBackend.TryCreate()
+        ?? throw new InvalidOperationException(
+            "Piper backend should start with at least one installed voice.");
+    var voices = piper.GetVoices();
+    var requestedVoice = Environment.GetEnvironmentVariable("DRAG_TEST_PIPER_VOICE");
+    var voice = string.IsNullOrWhiteSpace(requestedVoice)
+        ? voices.First()
+        : voices.FirstOrDefault(candidate => string.Equals(
+            candidate,
+            requestedVoice,
+            StringComparison.OrdinalIgnoreCase))
+            ?? throw new InvalidOperationException($"Piper voice not found: {requestedVoice}");
+    piper.WarmUp(voice);
+    piper.Speak("Drag Piper integration test", voice);
+}
+
 var eventWithMetadata = ProtocolMessage.Create(
     "EVENT", "LANE", "1", "GREEN", "SEQ", "42", "MS", "123456").Encode();
 Assert(

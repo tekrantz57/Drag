@@ -91,7 +91,11 @@ public static class SpeechAnnouncer
 
                 activeVoiceName = request.VoiceName;
 
-                if (backend is not null && !string.IsNullOrWhiteSpace(request.Phrase))
+                if (backend is not null && string.IsNullOrWhiteSpace(request.Phrase))
+                {
+                    backend.WarmUp(request.VoiceName);
+                }
+                else if (backend is not null)
                 {
                     backend.Speak(request.Phrase, request.VoiceName);
                 }

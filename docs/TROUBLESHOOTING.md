@@ -67,10 +67,24 @@ selection, validation, recovery boundaries, and Wine results.
 
 ## Voice Is Unavailable Under Wine
 
-DragWin can use SAPI voices installed in the Wine prefix or the packaged native
-Linux eSpeak NG helper. See [Linux Speech Under Wine](LINUX_SPEECH.md) for
-installation, engine selection, and diagnostics. Speech is optional and an
-unavailable engine does not affect race timing or controller operation.
+DragWin can use SAPI voices installed in the Wine prefix, Piper, or the
+packaged native Linux eSpeak NG helper. See
+[Linux Speech Under Wine](LINUX_SPEECH.md) for engine selection and eSpeak
+diagnostics. Speech is optional and an unavailable engine does not affect race
+timing or controller operation.
+
+## No Piper Voices Appear
+
+Installing `piper-tts` does not install a voice. Download both the `.onnx`
+model and `.onnx.json` configuration into Drag's Piper voice directory. On
+native Windows, confirm that `python` starts the environment where Piper was
+installed. Under Wine, start the helper natively with `--engine piper --port
+38593` before opening Race and Track Settings.
+
+If Piper was installed with pipx, system `python3` cannot import it. Run the
+helper with `$(pipx environment --value PIPX_LOCAL_VENVS)/piper-tts/bin/python`,
+or use the dedicated virtual environment described in
+[Piper Speech](PIPER_SPEECH.md).
 
 ## Sharing Diagnostics
 

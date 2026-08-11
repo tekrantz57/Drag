@@ -14,7 +14,7 @@ development builds.
 - Heads-up and bracket logic, Full and Pro Trees, staging modes, staged delay,
   dial-ins, reaction times, breakouts, placements, fouls, and DNFs.
 - Practice passes, tournaments, lane choice, byes, history, reports, exports,
-  backups, restore, diagnostics, and optional Windows or native Linux voice
+  backups, restore, diagnostics, and optional SAPI, Piper, or eSpeak NG voice
   announcements.
 - Four required and two optional sensor positions per lane throughout firmware,
   protocol, diagnostics, results, persistence, and reports.
@@ -33,8 +33,8 @@ development builds.
 - Self-contained x64 operation under Wine 11 on Intel Linux.
 - Native Windows ARM64 operation under ARM64 Wine 11 on a Rock 5B.
 - Successful controller firmware updates from both tested Wine environments.
-- Native Linux eSpeak NG helper support for DragWin under Wine, using a
-  loopback-only service and a speech engine selected in Race Settings.
+- Persistent Piper and native Linux eSpeak NG helper support, using
+  loopback-only services and a speech engine selected in Race Settings.
 
 ## Physical Limitation
 
@@ -55,8 +55,9 @@ components, routed mounting pockets, or both.
 - Venue decisions documented in `TODO.md`, including staging timeout and DNF
   advancement behavior.
 - Production tournament operation and feedback from additional operators.
-- Live native-Linux speech validation with DragWin under Wine. The equivalent
-  YATSS helper protocol has been verified on ARM64 Wine 11.
+- Live Piper and eSpeak NG validation with DragWin under Wine. The equivalent
+  YATSS helper protocol and Piper model caching have been verified on ARM64
+  Wine 11.
 
 The current Mega firmware uses approximately 81 percent of its 8 KB SRAM
 (6,689 bytes, leaving 1,503 bytes for local variables).

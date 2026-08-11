@@ -304,7 +304,8 @@ public sealed class RaceSettingsForm : Form
         speechBackendSelector.Items.AddRange([
             new SpeechBackendOption(SpeechBackendMode.Automatic, "Automatic"),
             new SpeechBackendOption(SpeechBackendMode.WindowsSapi, "Windows SAPI"),
-            new SpeechBackendOption(SpeechBackendMode.LinuxHelper, "Linux helper"),
+            new SpeechBackendOption(SpeechBackendMode.Piper, "Piper"),
+            new SpeechBackendOption(SpeechBackendMode.LinuxHelper, "eSpeak NG helper"),
             new SpeechBackendOption(SpeechBackendMode.None, "None")
         ]);
         speechBackendSelector.SelectedItem = speechBackendSelector.Items
@@ -316,18 +317,15 @@ public sealed class RaceSettingsForm : Form
     {
         speechVoiceSelector.Items.Clear();
         speechVoiceSelector.Items.Add("Default voice");
-        foreach (var voiceName in SpeechAnnouncer.GetInstalledVoices(SpeechBackend))
+        var installedVoices = SpeechAnnouncer.GetInstalledVoices(SpeechBackend);
+        foreach (var voiceName in installedVoices)
         {
             speechVoiceSelector.Items.Add(voiceName);
         }
-        if (!string.IsNullOrWhiteSpace(selectedVoice) &&
-            !speechVoiceSelector.Items.Contains(selectedVoice))
-        {
-            speechVoiceSelector.Items.Add(selectedVoice);
-        }
-        speechVoiceSelector.SelectedItem = string.IsNullOrWhiteSpace(selectedVoice)
-            ? "Default voice"
-            : selectedVoice;
+        speechVoiceSelector.SelectedItem = installedVoices.FirstOrDefault(voiceName =>
+                string.Equals(voiceName, selectedVoice, StringComparison.OrdinalIgnoreCase))
+            ?? installedVoices.FirstOrDefault()
+            ?? "Default voice";
     }
 
     private void UpdateVoiceState()

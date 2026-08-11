@@ -2,21 +2,23 @@
 
 DragWin can use native Linux text-to-speech while the unchanged Windows
 application runs under Wine. DragWin connects to a small helper on TCP
-`127.0.0.1:38592`; the helper invokes `espeak-ng` and acknowledges each
+`127.0.0.1:38594`; the helper invokes `espeak-ng` and acknowledges each
 announcement after playback finishes.
 
 The helper listens only on IPv4 loopback. It does not accept remote network
-connections, construct shell commands, or require root access. Drag uses a
-different port from YATSS, so both helpers may run at the same time.
+connections, construct shell commands, or require root access. Drag reserves
+`38593` for Piper and `38594` for eSpeak NG; YATSS uses `38591` and `38592`, so
+all four helpers may coexist.
 
 ## Speech Engine Selection
 
 The Announcements tab in Race and Track Settings offers these engines:
 
 - `Automatic` uses Windows SAPI when at least one SAPI voice is installed. If
-  SAPI has no voices, it tries the Linux helper.
+  SAPI has no voices, it tries Piper and then the eSpeak NG helper.
 - `Windows SAPI` uses only the existing Windows COM speech implementation.
-- `Linux helper` uses only the loopback helper.
+- `Piper` uses only the Piper helper on port `38593`.
+- `eSpeak NG helper` uses only the loopback helper on port `38594`.
 - `None` disables speech.
 
 The separate `Enabled` checkbox remains the quick global on/off control.
@@ -48,7 +50,7 @@ The release publish directory includes the helper at
 
 4. Start DragWin under Wine. Open Race and Track Settings, enable voice
    announcements, and leave the engine on `Automatic` or select
-   `Linux helper`. The voice list should contain eSpeak language codes such as
+   `eSpeak NG helper`. The voice list should contain language codes such as
    `en`, `en-gb`, and `en-us`.
 
 Keep the helper terminal open while DragWin is running. Stop it with `Ctrl+C`.
@@ -64,7 +66,7 @@ script path with the absolute path to the extracted helper:
 Description=DragWin Linux speech helper
 
 [Service]
-ExecStart=/usr/bin/python3 /absolute/path/to/DragWin/Linux/drag-speech-helper.py
+ExecStart=/usr/bin/python3 /absolute/path/to/DragWin/Linux/drag-speech-helper.py --engine espeak --port 38594
 Restart=on-failure
 
 [Install]
@@ -87,9 +89,11 @@ communication, race timing, results, and reports do not depend on speech.
 
 If no Linux voices appear:
 
-1. Verify that the helper says it is listening on `127.0.0.1:38592`.
+1. Verify that the helper says it is listening on `127.0.0.1:38594`.
 2. Run `espeak-ng --voices` and confirm that it returns voices.
-3. Change the selected engine away from `Linux helper` and back to refresh it.
+3. Change the selected engine away from `eSpeak NG helper` and back to refresh it.
 4. Check the helper terminal for an eSpeak or audio-system error.
 
-Only one Drag speech helper may listen on port `38592` at a time.
+Only one Drag eSpeak helper may listen on port `38594` at a time. See
+[Piper Speech](PIPER_SPEECH.md) for higher-quality local speech on Windows or
+Linux; Piper uses a separate port and may run alongside eSpeak NG.

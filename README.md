@@ -26,8 +26,8 @@ tournaments, reports, diagnostics, backups, and controller firmware updates.
 - HTML reports with optional JSON and CSV exports.
 - Verified manual restore, daily automatic backups, and pre-upgrade safety
   backups.
-- Optional Windows SAPI or native Linux voice announcements, disabled by
-  default.
+- Optional Windows SAPI, local Piper, or native Linux eSpeak NG announcements,
+  disabled by default.
 - In-app installation of the bundled DragMC firmware through the Mega's normal
   USB bootloader.
 
@@ -125,6 +125,7 @@ sharing any diagnostic material.
 - [Tournament behavior](docs/TOURNAMENTS.md)
 - [Controller firmware updates](docs/CONTROLLER_FIRMWARE_UPDATE.md)
 - [Linux speech under Wine](docs/LINUX_SPEECH.md)
+- [Piper speech](docs/PIPER_SPEECH.md)
 - [Arduino Due light-tree diagnostic](dragMCDueLightTest/README.md)
 - [Serial protocol](docs/SERIAL_PROTOCOL.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
