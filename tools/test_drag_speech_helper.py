@@ -1,10 +1,12 @@
 import importlib.util
+import io
 from pathlib import Path
 import sys
 import tempfile
 import types
 import unittest
 from unittest import mock
+import wave
 
 
 HELPER_PATH = Path(__file__).with_name("drag-speech-helper.py")
@@ -44,7 +46,7 @@ class FakeVoice:
         wav_file.setnchannels(1)
         wav_file.setsampwidth(2)
         wav_file.setframerate(22050)
-        wav_file.writeframes(b"\0\0")
+        wav_file.writeframes(b"\x01\x02")
 
 
 class PiperSpeechEngineTests(unittest.TestCase):
@@ -90,7 +92,15 @@ class PiperSpeechEngineTests(unittest.TestCase):
                 engine.speak("Lane one ready", "voice-a")
 
             self.assertEqual(["voice-a.onnx"], FakeVoice.loaded_models)
-            self.assertTrue(play_wav.call_args.args[0].startswith(b"RIFF"))
+            audio = play_wav.call_args.args[0]
+            self.assertTrue(audio.startswith(b"RIFF"))
+            with wave.open(io.BytesIO(audio), "rb") as wav_file:
+                frames = wav_file.readframes(wav_file.getnframes())
+                expected_silence_bytes = round(
+                    wav_file.getframerate() * HELPER.PIPER_LEADING_SILENCE_MS / 1000
+                ) * wav_file.getnchannels() * wav_file.getsampwidth()
+            self.assertEqual(bytes(expected_silence_bytes), frames[:expected_silence_bytes])
+            self.assertEqual(b"\x01\x02", frames[expected_silence_bytes:])
 
 
 if __name__ == "__main__":

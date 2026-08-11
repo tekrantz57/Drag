@@ -18,6 +18,7 @@ PROTOCOL_VERSION = 1
 DEFAULT_PORT = 38594
 MAX_REQUEST_BYTES = 8192
 MAX_TEXT_LENGTH = 1000
+PIPER_LEADING_SILENCE_MS = 200
 
 
 class EspeakSpeechEngine:
@@ -134,7 +135,26 @@ class PiperSpeechEngine:
                     wav_file,
                     syn_config=self.synthesis_config_type(),
                 )
-            self._play_wav(audio.getvalue())
+            self._play_wav(self._add_leading_silence(audio.getvalue()))
+
+    @staticmethod
+    def _add_leading_silence(audio: bytes) -> bytes:
+        source_buffer = io.BytesIO(audio)
+        with wave.open(source_buffer, "rb") as source:
+            parameters = source.getparams()
+            frames = source.readframes(source.getnframes())
+
+        silent_frame_count = round(
+            parameters.framerate * PIPER_LEADING_SILENCE_MS / 1000
+        )
+        silence = bytes(
+            silent_frame_count * parameters.nchannels * parameters.sampwidth
+        )
+        output_buffer = io.BytesIO()
+        with wave.open(output_buffer, "wb") as output:
+            output.setparams(parameters)
+            output.writeframes(silence + frames)
+        return output_buffer.getvalue()
 
     @staticmethod
     def _play_wav(audio: bytes) -> None:
