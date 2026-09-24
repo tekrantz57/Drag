@@ -48,6 +48,30 @@
   diagnostic inputs and change-only monitoring currently uses 6,656 bytes,
   about 81% of the Mega's 8 KB SRAM.
 
+## Possible future controller
+
+- Revisit the ESP32-S31 after mature development boards or suitable carrier
+  boards are available. Espressif's preliminary ESP32-S31-WROOM-1/-1U and
+  WROOM-3/-3U documentation exposes 54 general-purpose GPIO signals; six of
+  the chip's 60 GPIO are consumed by module flash connections. USB D+/D- use
+  separate dedicated pins. The current Drag design requires 52 direct GPIO
+  connections (24 sensor inputs and 28 Tree outputs), so these modules could
+  support the existing one-signal-per-pin design with two GPIO remaining.
+- Confirm that the eventual board actually brings out all 54 module GPIO.
+  GPIO36, GPIO37, GPIO60, and GPIO61 are reset strapping pins, GPIO54-GPIO57
+  can provide JTAG, and GPIO58-GPIO59 default to UART0. These pins can become
+  regular GPIO after reset, but connected circuits must not interfere with
+  boot. Prefer using strapping pins for high-impedance Tree-driver inputs
+  rather than sensor signals that could impose a level during reset.
+- If evaluating an ESP32-S31 board, give the 24 timing-critical sensor inputs
+  priority for direct interrupt-capable GPIO. Consider moving the 28 Tree
+  outputs to suitable drivers, shift registers, or output expanders to reduce
+  pin pressure and provide better electrical isolation.
+- Verify the final board schematic, pin restrictions, interrupt support, and
+  Arduino/ESP-IDF toolchain maturity before starting a port. Provide level
+  adaptation for any LM393 sensor output that can reach 5 V because ESP32-S31
+  GPIO uses 3.3 V logic.
+
 ## Remaining controller firmware update bench tests
 
 - Completed July 30, 2026: a self-contained x64 DragWin publish ran under Wine
