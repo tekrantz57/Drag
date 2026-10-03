@@ -7,6 +7,20 @@ public static class SpeechAnnouncer
     private static readonly object SyncRoot = new();
     private static BlockingCollection<SpeechRequest>? requests;
 
+    public static Task<IReadOnlyList<string>> GetInstalledVoicesAsync(SpeechBackendMode backendMode)
+    {
+        var completion = new TaskCompletionSource<IReadOnlyList<string>>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var worker = new Thread(() => completion.SetResult(GetInstalledVoices(backendMode)))
+        {
+            IsBackground = true,
+            Name = "Drag speech voice discovery"
+        };
+        worker.SetApartmentState(ApartmentState.STA);
+        worker.Start();
+        return completion.Task;
+    }
+
     public static IReadOnlyList<string> GetInstalledVoices(SpeechBackendMode backendMode)
     {
         try

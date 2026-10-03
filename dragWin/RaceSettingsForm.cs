@@ -50,6 +50,13 @@ public sealed class RaceSettingsForm : Form
         AutoSize = true,
         MinimumSize = new Size(95, 30)
     };
+    private string selectedSpeechVoice = "";
+    private bool updatingSpeechVoices;
+    private bool voiceLoading;
+    private int voiceLoadGeneration;
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    internal Func<SpeechBackendMode, Task<IReadOnlyList<string>>> VoiceDiscovery { get; set; } =
+        SpeechAnnouncer.GetInstalledVoicesAsync;
     private readonly CheckBox exportJsonCheck = new()
     {
         Text = "Write JSON tournament archive",
@@ -101,7 +108,8 @@ public sealed class RaceSettingsForm : Form
         exportCsvCheck.Checked = exportTournamentCsv;
         voiceAnnouncementsCheck.Checked = voiceAnnouncementsEnabled;
         LoadSpeechBackends(speechBackend);
-        LoadSpeechVoices(speechVoiceName);
+        selectedSpeechVoice = speechVoiceName;
+        SetSpeechVoices([], speechVoiceName);
 
         var tabs = new TabControl { Dock = DockStyle.Fill };
         tabs.TabPages.Add(CreateRaceTab(dialSeconds));
@@ -155,12 +163,18 @@ public sealed class RaceSettingsForm : Form
 
         modeSelector.SelectedIndexChanged += (_, _) => UpdateDialState();
         laneCountSelector.SelectedIndexChanged += (_, _) => UpdateDialState();
-        voiceAnnouncementsCheck.CheckedChanged += (_, _) => UpdateVoiceState();
-        speechBackendSelector.SelectedIndexChanged += (_, _) =>
+        voiceAnnouncementsCheck.CheckedChanged += async (_, _) => await LoadSpeechVoicesAsync();
+        speechBackendSelector.SelectedIndexChanged += async (_, _) => await LoadSpeechVoicesAsync();
+        speechVoiceSelector.SelectedIndexChanged += (_, _) =>
         {
-            LoadSpeechVoices(SpeechVoiceName);
-            UpdateVoiceState();
+            if (!updatingSpeechVoices)
+            {
+                selectedSpeechVoice = speechVoiceSelector.SelectedIndex <= 0
+                    ? "" : speechVoiceSelector.SelectedItem?.ToString() ?? "";
+            }
         };
+        Shown += async (_, _) => await LoadSpeechVoicesAsync();
+        FormClosed += (_, _) => ++voiceLoadGeneration;
         testVoiceButton.Click += (_, _) =>
             SpeechAnnouncer.SpeakAsync(
                 "Drag strip announcements are ready.",
@@ -189,9 +203,7 @@ public sealed class RaceSettingsForm : Form
         speechBackendSelector.SelectedItem is SpeechBackendOption option
             ? option.Mode
             : SpeechBackendMode.Automatic;
-    public string SpeechVoiceName => speechVoiceSelector.SelectedIndex <= 0
-        ? ""
-        : speechVoiceSelector.SelectedItem?.ToString()?.Trim() ?? "";
+    public string SpeechVoiceName => selectedSpeechVoice;
     public bool ExportTournamentJson => exportJsonCheck.Checked;
     public bool ExportTournamentCsv => exportCsvCheck.Checked;
 
@@ -313,19 +325,45 @@ public sealed class RaceSettingsForm : Form
             .First(option => option.Mode == selectedBackend);
     }
 
-    private void LoadSpeechVoices(string selectedVoice)
+    private async Task LoadSpeechVoicesAsync()
     {
+        var generation = ++voiceLoadGeneration;
+        var mode = SpeechBackend;
+        voiceLoading = voiceAnnouncementsCheck.Checked && mode != SpeechBackendMode.None;
+        UpdateVoiceState();
+        if (!voiceLoading) return;
+
+        var requestedVoice = selectedSpeechVoice;
+        IReadOnlyList<string> voices;
+        try
+        {
+            voices = await VoiceDiscovery(mode);
+        }
+        catch
+        {
+            voices = [];
+        }
+        if (IsDisposed || Disposing || generation != voiceLoadGeneration) return;
+        voiceLoading = false;
+        SetSpeechVoices(voices, requestedVoice);
+        UpdateVoiceState();
+    }
+
+    private void SetSpeechVoices(IReadOnlyList<string> installedVoices, string selectedVoice)
+    {
+        updatingSpeechVoices = true;
         speechVoiceSelector.Items.Clear();
         speechVoiceSelector.Items.Add("Default voice");
-        var installedVoices = SpeechAnnouncer.GetInstalledVoices(SpeechBackend);
         foreach (var voiceName in installedVoices)
         {
             speechVoiceSelector.Items.Add(voiceName);
         }
-        speechVoiceSelector.SelectedItem = installedVoices.FirstOrDefault(voiceName =>
-                string.Equals(voiceName, selectedVoice, StringComparison.OrdinalIgnoreCase))
-            ?? installedVoices.FirstOrDefault()
-            ?? "Default voice";
+        if (!string.IsNullOrEmpty(selectedVoice) && !installedVoices.Contains(selectedVoice))
+            speechVoiceSelector.Items.Add(selectedVoice);
+        speechVoiceSelector.SelectedItem = string.IsNullOrEmpty(selectedVoice)
+            ? "Default voice" : installedVoices.FirstOrDefault(voiceName =>
+                string.Equals(voiceName, selectedVoice, StringComparison.OrdinalIgnoreCase)) ?? selectedVoice;
+        updatingSpeechVoices = false;
     }
 
     private void UpdateVoiceState()
@@ -333,8 +371,8 @@ public sealed class RaceSettingsForm : Form
         speechBackendSelector.Enabled = voiceAnnouncementsCheck.Checked;
         var speechEnabled = voiceAnnouncementsCheck.Checked &&
             SpeechBackend != SpeechBackendMode.None;
-        speechVoiceSelector.Enabled = speechEnabled;
-        testVoiceButton.Enabled = speechEnabled;
+        speechVoiceSelector.Enabled = speechEnabled && !voiceLoading;
+        testVoiceButton.Enabled = speechEnabled && !voiceLoading;
     }
 
     private sealed record SpeechBackendOption(SpeechBackendMode Mode, string DisplayName)

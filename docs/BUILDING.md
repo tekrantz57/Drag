@@ -29,6 +29,18 @@ dotnet format dragWin\dragWin.sln --verify-no-changes --no-restore
 python -m unittest tools\test_drag_speech_helper.py
 ```
 
+The protocol runner includes tournament UI, dial-input, and interrupted-round
+recovery regression tests. CI also compiles a host harness against the actual
+Mega sketch to test result delivery with a full queue and slow serial output:
+
+```sh
+g++ -std=c++17 -I tools/firmware-tests tools/firmware-tests/results.cpp -o /tmp/drag-firmware-tests
+/tmp/drag-firmware-tests
+```
+
+These host tests exercise firmware logic with simulated pins and serial;
+physical timing and electrical behavior still require track testing.
+
 Run DragWin from source with:
 
 ```powershell

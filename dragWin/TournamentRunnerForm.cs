@@ -122,6 +122,8 @@ public sealed class TournamentRunnerForm : Form
     private long? lastAnnouncedLaneChoiceCarId;
     private DateTimeOffset lastRunnerButtonActionAt;
     private RunnerPhase phase;
+    private bool heatArmed;
+    private bool heatConfirmationSaved;
 
     public TournamentRunnerForm(
         Tournament tournament,
@@ -314,15 +316,29 @@ public sealed class TournamentRunnerForm : Form
 
     private void LoadCurrentRound()
     {
-        round = repository.GetLatestRound(tournament.Id);
+        round = repository.RecoverTournamentProgress(tournament, planner);
         var confirmed = repository.GetConfirmedHeatNumbers(tournament.Id, round.RoundNumber);
         heatIndex = Array.FindIndex(round.Heats.ToArray(), item => !confirmed.Contains(item.HeatNumber));
-        if (heatIndex < 0) heatIndex = 0;
+        if (heatIndex < 0)
+        {
+            heat = NormalizeFinalHeat(round.Heats.Last());
+            var (cars, _) = repository.GetRoundAdvancers(tournament.Id, round.RoundNumber);
+            void ShowCompletion()
+            {
+                ShowCompletedTournamentReport(cars.SingleOrDefault());
+                Close();
+            }
+            if (IsHandleCreated) ShowCompletion();
+            else Shown += (_, _) => ShowCompletion();
+            return;
+        }
         LoadHeat();
     }
 
     private void LoadHeat()
     {
+        heatArmed = false;
+        heatConfirmationSaved = false;
         heat = NormalizeFinalHeat(round.Heats[heatIndex]);
         lineupAnnounced = false;
         resultsAnnounced = false;
@@ -626,6 +642,7 @@ public sealed class TournamentRunnerForm : Form
         }
         commands.Add(["RESET"]);
         client.SendBatch(commands);
+        heatArmed = true;
         AddTimeline("Heat armed. Stage only the displayed lanes.");
         Speak(RaceAnnouncementText.HeatArmed(heat.Entries.Select(entry => entry.LaneNumber)));
         SetPhase(RunnerPhase.WaitingForStage);
@@ -653,6 +670,7 @@ public sealed class TournamentRunnerForm : Form
         AddTimeline("TEST: Simulated heat results generated.");
         sendHeatButton.Enabled = false;
         SetPhase(RunnerPhase.Racing);
+        heatArmed = true;
         foreach (var message in DemoHeatSimulator.CreateBracketHeatMessages(
                      heat,
                      splitSensorLanes: splitSensorLanes))
@@ -711,15 +729,7 @@ public sealed class TournamentRunnerForm : Form
         {
             var entry = (RoundEntry)row.Tag!;
             var text = row.Cells["Dial"].Value?.ToString();
-            if (!decimal.TryParse(text, NumberStyles.Number, CultureInfo.CurrentCulture, out var seconds) &&
-                !decimal.TryParse(text, NumberStyles.Number, CultureInfo.InvariantCulture, out seconds))
-            {
-                MessageBox.Show(this, $"Enter a valid dial-in for {entry.Car.DisplayName}.", Text);
-                return null;
-            }
-
-            var milliseconds = decimal.ToInt32(seconds * 1000M);
-            if (milliseconds is < 100 or > 60000)
+            if (!DialInput.TryParseMilliseconds(text, out var milliseconds))
             {
                 MessageBox.Show(
                     this,
@@ -779,6 +789,7 @@ public sealed class TournamentRunnerForm : Form
         }
 
         Append(message.Encode());
+        if (!heatArmed && message.Type is "EVENT" or "RESULT") return;
         if (message.Type == "ERROR")
         {
             phaseBanner.Text = "CONTROLLER ERROR  |  Review the timeline before continuing";
@@ -869,6 +880,7 @@ public sealed class TournamentRunnerForm : Form
                     Speak("Staging aborted. Please restage.");
                     break;
                 case "RACE_COMPLETE":
+                    heatArmed = false;
                     SetPhase(RunnerPhase.ResultsReady);
                     ShowResultsSummary();
                     AddTimeline("Race complete. Review the results before confirming advancement.");
@@ -1048,6 +1060,7 @@ public sealed class TournamentRunnerForm : Form
         }
 
         liveResults.Clear();
+        heatArmed = false;
         resultAdvancerIds.Clear();
         foreach (var entry in heat.Entries)
         {
@@ -1081,7 +1094,7 @@ public sealed class TournamentRunnerForm : Form
 
     private void ConfirmHeat()
     {
-        if (confirmingHeat)
+        if (confirmingHeat || phase != RunnerPhase.ResultsReady)
         {
             return;
         }
@@ -1091,35 +1104,37 @@ public sealed class TournamentRunnerForm : Form
         sendHeatButton.Enabled = false;
         rerunButton.Enabled = false;
 
-        var results = BuildRunResults();
-        var advancers = planner.SelectAdvancers(heat, results);
-        repository.SaveHeatResults(
-            tournament.Id, round.RoundNumber, heat.HeatNumber,
-            results, advancers.Select(result => result.CarId).ToHashSet());
-
-        if (!repository.IsRoundConfirmed(tournament.Id, round.RoundNumber))
+        try
         {
-            heatIndex++;
-            SetPhase(RunnerPhase.Confirmed);
-            LoadHeat();
+            if (!heatConfirmationSaved)
+            {
+                var results = BuildRunResults();
+                var advancers = planner.SelectAdvancers(heat, results);
+                repository.SaveHeatResults(
+                    tournament.Id, round.RoundNumber, heat.HeatNumber,
+                    results, advancers.Select(result => result.CarId).ToHashSet());
+                heatConfirmationSaved = true;
+            }
+            LoadCurrentRound();
+        }
+        catch (Exception exception) when (
+            exception is Microsoft.Data.Sqlite.SqliteException or IOException or
+                UnauthorizedAccessException or InvalidOperationException)
+        {
+            MessageBox.Show(this,
+                $"Could not finish confirming this heat. You can retry; saved results will be retained.\n\n{exception.Message}",
+                Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
             confirmingHeat = false;
-            UpdateHeatActionButtons();
-            return;
+            if (!IsDisposed)
+            {
+                confirmButton.Enabled = phase == RunnerPhase.ResultsReady;
+                rerunButton.Enabled = !heatConfirmationSaved;
+                UpdateHeatActionButtons();
+            }
         }
-
-        var (cars, reactions) = repository.GetRoundAdvancers(tournament.Id, round.RoundNumber);
-        if (cars.Count <= 1)
-        {
-            repository.CompleteTournament(tournament.Id);
-            ShowCompletedTournamentReport(cars.SingleOrDefault());
-            Close();
-            return;
-        }
-        var nextRound = planner.CreateRound(cars, tournament.LaneCount, round.RoundNumber + 1, priorReactionMicroseconds: reactions);
-        repository.SaveRound(tournament.Id, nextRound);
-        LoadCurrentRound();
-        confirmingHeat = false;
-        UpdateHeatActionButtons();
     }
 
     private void AnnounceLineupOnce()
@@ -1194,15 +1209,15 @@ public sealed class TournamentRunnerForm : Form
             return;
         }
 
+        var report = repository.GetTournamentReport(tournament.Id);
         completionReportShown = true;
         var runnerUp = winner is null
             ? null
             : heat.Entries
                 .Where(entry => entry.Car.Id != winner.Id)
-                .OrderBy(entry => liveResults.TryGetValue(entry.LaneNumber, out var result) &&
-                                  result.FinishOrder > 0
-                    ? result.FinishOrder
-                    : int.MaxValue)
+                .OrderBy(entry => report.Rows.FirstOrDefault(row =>
+                    row.RoundNumber == round.RoundNumber && row.HeatNumber == heat.HeatNumber &&
+                    row.RacerName == entry.Car.RacerName && row.CarName == entry.Car.Name)?.FinishOrder ?? int.MaxValue)
                 .Select(entry => entry.Car)
                 .FirstOrDefault();
         Speak(RaceAnnouncementText.TournamentComplete(winner, runnerUp));
@@ -1211,7 +1226,6 @@ public sealed class TournamentRunnerForm : Form
             : $"Winner: {winner.DisplayName}";
         try
         {
-            var report = repository.GetTournamentReport(tournament.Id);
             var paths = TournamentReportArchiveWriter.Write(
                 report,
                 exportOptions: reportExportOptions);

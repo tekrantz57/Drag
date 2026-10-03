@@ -16,6 +16,10 @@ Four-lane heats can advance two cars. DNFs remain unplaced because the current
 sensor arrangement cannot establish a defensible order among cars that never
 finish.
 
+Completed heat results remain available for confirmation or rerun while the
+controller clears the track and returns to staging. The runner accepts race
+events only after that heat has been armed.
+
 ## Ordered lane choice
 
 Implemented in the tournament runner.
@@ -46,6 +50,11 @@ The source repository does not include operator database contents.
 Manual backups, verified restore, daily automatic backups, and pre-schema-change
 safety backups protect the local database. Tournament reports open inside
 DragWin and can optionally include JSON and CSV exports.
+
+If confirmation was saved but the application stopped before creating the next
+round, reopening the tournament advances from the saved results. A confirmed
+final is marked complete. Failed confirmation or advancement can be retried;
+the operator cannot rerun a heat whose confirmation has already been saved.
 
 ## Heat setup
 

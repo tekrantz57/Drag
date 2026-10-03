@@ -264,9 +264,9 @@ Assert(!dueLightTestIdentity.IsExpectedDragMc("0.6.4"),
     "The Mega firmware updater must reject the Due diagnostic identity.");
 
 var firmwarePackagePath = FindRepositoryFile(
-    Path.Combine("dragMC", "dist", "DragMC-mega-0.6.4.dragfw"));
+    Path.Combine("dragMC", "dist", "DragMC-mega-0.6.5.dragfw"));
 var firmwarePackage = ControllerFirmwarePackage.Load(firmwarePackagePath);
-AssertEqual("0.6.4", firmwarePackage.Manifest.FirmwareVersion);
+AssertEqual("0.6.5", firmwarePackage.Manifest.FirmwareVersion);
 AssertEqual("ARDUINO_MEGA_2560", firmwarePackage.Manifest.BoardProfile);
 AssertEqual("atmega2560", firmwarePackage.Manifest.Mcu);
 var packageHash = Convert.ToHexString(SHA256.HashData(firmwarePackage.ImageBytes));
@@ -720,7 +720,8 @@ finally
     }
 }
 
-Console.WriteLine("Protocol tests passed.");
+RegressionTests.Run();
+Console.WriteLine("Protocol and regression tests passed.");
 
 static void Assert(bool condition, string message)
 {

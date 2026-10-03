@@ -236,6 +236,12 @@ unsigned long sensorMonitorRenewedAtMs = 0;
 uint8_t sensorDiagnosticCursor = 0;
 bool sensorMonitorEnabled = false;
 bool lightTestEnabled = false;
+bool raceResultsPending = false;
+uint8_t resultLaneCursor = 0;
+uint8_t resultFieldCursor[MAX_LANE_COUNT] = {};
+uint8_t resultPlaceCursor = 0;
+uint8_t placementCount = 0;
+uint8_t placementLanes[MAX_LANE_COUNT] = {};
 
 void formatHeatLanes(char* destination, const size_t destinationSize);
 void formatSplitLanes(char* destination, const size_t destinationSize);
@@ -507,6 +513,9 @@ void enterState(const TreeState newState, const unsigned long nowMs) {
   switch (newState) {
     case TreeState::WaitingForAllLanes:
       turnOffRaceLights();
+      raceResultsPending = false;
+      for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) resultFieldCursor[lane] = 0;
+      resultLaneCursor = 0;
       resetLaneResults();
       sendProtocolMessage("EVENT:TREE:WAITING_FOR_ALL_LANES");
       break;
@@ -526,7 +535,6 @@ void enterState(const TreeState newState, const unsigned long nowMs) {
       break;
 
     case TreeState::ShowingResults:
-      sendProtocolMessage("EVENT:TREE:RACE_COMPLETE");
       break;
 
     case TreeState::WaitingForClear:
@@ -691,53 +699,27 @@ void updateLaneTree(const uint8_t lane, const unsigned long nowMs) {
   }
 }
 
-void reportElapsedAndBreakout(const uint8_t lane) {
+void prepareElapsedResult(const uint8_t lane) {
   LaneRace& result = lanes[lane];
-  char message[64];
-
-  if (!result.launched) {
-    snprintf(
-        message, sizeof(message),
-        "RESULT:LANE:%u:ELAPSED_UNAVAILABLE", lane + 1);
-    sendProtocolMessage(message);
-    return;
-  }
-
+  if (!result.launched) return;
   result.elapsedUs = result.finishedAtUs - result.launchedAtUs;
   result.elapsedAvailable = true;
-  snprintf(
-      message, sizeof(message), "RESULT:LANE:%u:ELAPSED_US:%lu",
-      lane + 1, result.elapsedUs);
-  sendProtocolMessage(message);
-
-  if (raceMode == RaceMode::Bracket &&
-      result.elapsedUs < dialMs[lane] * 1000UL) {
-    snprintf(
-        message, sizeof(message), "RESULT:LANE:%u:BREAKOUT_US:%lu",
-        lane + 1, dialMs[lane] * 1000UL - result.elapsedUs);
-  } else {
-    snprintf(message, sizeof(message), "RESULT:LANE:%u:VALID", lane + 1);
-  }
-  sendProtocolMessage(message);
 }
 
-void reportTrapSpeed(const uint8_t lane) {
+void formatTrapSpeed(const uint8_t lane, char* message, const size_t size) {
   LaneRace& result = lanes[lane];
-  char message[64];
 
   if (!result.crossedSpeedTrap) {
     snprintf(
-        message, sizeof(message), "RESULT:LANE:%u:SPEED_UNAVAILABLE",
+        message, size, "RESULT:LANE:%u:SPEED_UNAVAILABLE",
         lane + 1);
-    sendProtocolMessage(message);
     return;
   }
 
   const unsigned long trapUs = result.finishedAtUs - result.speedTrapAtUs;
   if (trapUs == 0 || trapUs > MAX_RACE_TIME_MS * 1000UL) {
     snprintf(
-        message, sizeof(message), "RESULT:LANE:%u:SPEED_INVALID", lane + 1);
-    sendProtocolMessage(message);
+        message, size, "RESULT:LANE:%u:SPEED_INVALID", lane + 1);
     return;
   }
 
@@ -745,9 +727,8 @@ void reportTrapSpeed(const uint8_t lane) {
   const float mph =
       (speedTrapInches / (trapUs / 1000000.0F)) / 17.6F;
   snprintf(
-      message, sizeof(message), "RESULT:LANE:%u:SPEED_MPH_X100:%lu",
+      message, size, "RESULT:LANE:%u:SPEED_MPH_X100:%lu",
       lane + 1, static_cast<unsigned long>(mph * 100.0F + 0.5F));
-  sendProtocolMessage(message);
 }
 
 void updateLaneRace(const uint8_t lane) {
@@ -823,23 +804,7 @@ void updateLaneRace(const uint8_t lane) {
   if (finish.becameBlocked()) {
     result.finishedAtUs = finish.blockedAtUs();
     result.finished = true;
-    if (laneHasSplitSensors(lane)) {
-      char message[52];
-      if (!result.crossedSplit1) {
-        snprintf(
-            message, sizeof(message),
-            "RESULT:LANE:%u:INTERVAL_1_UNAVAILABLE", lane + 1);
-        sendProtocolMessage(message);
-      }
-      if (!result.crossedSplit2) {
-        snprintf(
-            message, sizeof(message),
-            "RESULT:LANE:%u:INTERVAL_2_UNAVAILABLE", lane + 1);
-        sendProtocolMessage(message);
-      }
-    }
-    reportElapsedAndBreakout(lane);
-    reportTrapSpeed(lane);
+    prepareElapsedResult(lane);
   }
 }
 
@@ -907,8 +872,10 @@ bool bracketLaneRanksAhead(const uint8_t candidate, const uint8_t current) {
   return false;
 }
 
-void reportPlacements() {
-  char message[40];
+void prepareRaceResults() {
+  placementCount = 0;
+  resultPlaceCursor = 0;
+  raceResultsPending = true;
 
   if (raceMode == RaceMode::HeadsUp) {
     bool used[MAX_LANE_COUNT] = {};
@@ -927,18 +894,12 @@ void reportPlacements() {
       }
       if (bestLane < 0) break;
       used[bestLane] = true;
-      snprintf(
-          message, sizeof(message), "RESULT:PLACE:%u:LANE:%u",
-          place, bestLane + 1);
-      sendProtocolMessage(message);
+      placementLanes[placementCount++] = bestLane;
     }
-    if (place == 1) sendProtocolMessage("RESULT:NO_WINNER");
     return;
   }
 
   bool used[MAX_LANE_COUNT] = {};
-  uint8_t place = 1;
-  int8_t winner = -1;
   while (true) {
     int8_t bestLane = -1;
     for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
@@ -952,18 +913,95 @@ void reportPlacements() {
     }
     if (bestLane < 0) break;
     used[bestLane] = true;
-    if (winner < 0) winner = bestLane;
-    snprintf(
-        message, sizeof(message), "RESULT:PLACE:%u:LANE:%u",
-        place++, bestLane + 1);
-    sendProtocolMessage(message);
+    placementLanes[placementCount++] = bestLane;
   }
 
-  if (winner < 0) {
-    sendProtocolMessage("RESULT:NO_WINNER");
+}
+
+// Final results are retried a frame at a time; polling continues while serial drains.
+void serviceRaceResults() {
+  if ((treeState != TreeState::RaceActive && !raceResultsPending) ||
+      serialQueueCount >= SERIAL_QUEUE_CAPACITY) return;
+  char message[64];
+  message[0] = '\0';
+  for (uint8_t offset = 0; offset < MAX_LANE_COUNT; ++offset) {
+    const uint8_t lane = (resultLaneCursor + offset) % MAX_LANE_COUNT;
+    const LaneRace& result = lanes[lane];
+    if (!laneParticipates(lane) ||
+        (!raceResultsPending && !result.finished && !result.fouled)) continue;
+    while (resultFieldCursor[lane] < 9) {
+      switch (resultFieldCursor[lane]) {
+        case 0:
+          if (result.reactionAvailable) snprintf(message, sizeof(message),
+              "EVENT:LANE:%u:REACTION_US:%ld", lane + 1, static_cast<long>(result.reactionUs));
+          break;
+        case 1:
+          if (result.fouled) snprintf(message, sizeof(message), "EVENT:LANE:%u:FOUL", lane + 1);
+          break;
+        case 2:
+        case 3:
+          if (laneHasSplitSensors(lane) && !result.fouled) {
+            const bool first = resultFieldCursor[lane] == 2;
+            const bool crossed = first ? result.crossedSplit1 : result.crossedSplit2;
+            const unsigned long atUs = first ? result.split1AtUs : result.split2AtUs;
+            if (crossed) snprintf(message, sizeof(message), "RESULT:LANE:%u:INTERVAL_%u_US:%lu",
+                lane + 1, first ? 1 : 2, atUs - result.launchedAtUs);
+            else snprintf(message, sizeof(message), "RESULT:LANE:%u:INTERVAL_%u_UNAVAILABLE",
+                lane + 1, first ? 1 : 2);
+          }
+          break;
+        case 4:
+          if (result.launched && result.crossedSpeedTrap) snprintf(message, sizeof(message),
+              "RESULT:LANE:%u:SPEED_TRAP_US:%lu", lane + 1, result.speedTrapAtUs - result.launchedAtUs);
+          break;
+        case 5:
+          if (result.finished) {
+            if (result.elapsedAvailable) snprintf(message, sizeof(message),
+                "RESULT:LANE:%u:ELAPSED_US:%lu", lane + 1, result.elapsedUs);
+            else snprintf(message, sizeof(message), "RESULT:LANE:%u:ELAPSED_UNAVAILABLE", lane + 1);
+          }
+          break;
+        case 6:
+          if (result.elapsedAvailable) {
+            if (raceMode == RaceMode::Bracket && result.elapsedUs < dialMs[lane] * 1000UL)
+              snprintf(message, sizeof(message), "RESULT:LANE:%u:BREAKOUT_US:%lu",
+                  lane + 1, dialMs[lane] * 1000UL - result.elapsedUs);
+            else snprintf(message, sizeof(message), "RESULT:LANE:%u:VALID", lane + 1);
+          }
+          break;
+        case 7:
+          if (result.finished) formatTrapSpeed(lane, message, sizeof(message));
+          break;
+        case 8:
+          if (!result.fouled && !result.finished) snprintf(message, sizeof(message), "RESULT:LANE:%u:DNF", lane + 1);
+          break;
+      }
+      if (message[0] != '\0') {
+        if (queueProtocolMessage(message)) ++resultFieldCursor[lane];
+        resultLaneCursor = (lane + 1) % MAX_LANE_COUNT;
+        return;
+      }
+      ++resultFieldCursor[lane];
+    }
+  }
+
+  if (!raceResultsPending) return;
+  if (resultPlaceCursor < placementCount) {
+    snprintf(message, sizeof(message), "RESULT:PLACE:%u:LANE:%u",
+        resultPlaceCursor + 1, placementLanes[resultPlaceCursor] + 1);
+  } else if (resultPlaceCursor == placementCount) {
+    if (placementCount == 0) strcpy(message, "RESULT:NO_WINNER");
+    else if (raceMode == RaceMode::Bracket) snprintf(message, sizeof(message),
+        "RESULT:WINNER:LANE:%u", placementLanes[0] + 1);
   } else {
-    snprintf(message, sizeof(message), "RESULT:WINNER:LANE:%u", winner + 1);
-    sendProtocolMessage(message);
+    strcpy(message, "EVENT:TREE:RACE_COMPLETE");
+  }
+  if (message[0] == '\0' || queueProtocolMessage(message)) {
+    if (resultPlaceCursor > placementCount) {
+      raceResultsPending = false;
+      stateStartedAtMs = millis();
+    }
+    ++resultPlaceCursor;
   }
 }
 
@@ -1050,7 +1088,7 @@ void queueChangedSensorDiagnostic(const uint8_t lane, const uint8_t sensor) {
 }
 
 void serviceSensorDiagnostics() {
-  if (pendingSensorDiagnosticMask == 0 ||
+  if (raceResultsPending || pendingSensorDiagnosticMask == 0 ||
       serialQueueCount >=
           SERIAL_QUEUE_CAPACITY - SERIAL_DIAGNOSTIC_RESERVED_SLOTS) {
     return;
@@ -1575,27 +1613,18 @@ void updateTree(const unsigned long nowMs) {
           latestLaneDelayMs() +
           treeGreenDelayMs();
       if (allLanesHaveResults()) {
-        reportPlacements();
+        prepareRaceResults();
         enterState(TreeState::ShowingResults, nowMs);
       } else if (nowMs - raceEpochMs >=
                  latestGreenDelay + MAX_RACE_TIME_MS) {
-        for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
-          if (!laneParticipates(lane)) continue;
-          if (!lanes[lane].fouled && !lanes[lane].finished) {
-            char message[28];
-            snprintf(
-                message, sizeof(message), "RESULT:LANE:%u:DNF", lane + 1);
-            sendProtocolMessage(message);
-          }
-        }
-        reportPlacements();
+        prepareRaceResults();
         enterState(TreeState::ShowingResults, nowMs);
       }
       break;
     }
 
     case TreeState::ShowingResults:
-      if (nowMs - stateStartedAtMs >= RESULT_HOLD_MS) {
+      if (!raceResultsPending && nowMs - stateStartedAtMs >= RESULT_HOLD_MS) {
         enterState(TreeState::WaitingForClear, nowMs);
       }
       break;
@@ -1644,6 +1673,7 @@ void loop() {
   updateStagingLights();
   updateTree(nowMs);
   updateHeartbeat(nowMs);
+  serviceRaceResults();
   serviceSensorDiagnostics();
   serviceSerialOutput();
 }

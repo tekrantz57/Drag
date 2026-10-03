@@ -60,5 +60,5 @@ components, routed mounting pockets, or both.
   Wine 11.
 
 The current Mega firmware uses approximately 81 percent of its 8 KB SRAM
-(6,689 bytes, leaving 1,503 bytes for local variables).
+(6,711 bytes, leaving 1,481 bytes for local variables, firmware 0.6.5).
 Reassess memory after all 24 sensor inputs are installed and exercised.

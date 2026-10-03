@@ -192,6 +192,13 @@ sends the corresponding `UNAVAILABLE` result. Missing or disabled interval
 timers never prevent a pass from finishing. Segment times are calculated by
 Windows from adjacent cumulative values.
 
+Firmware 0.6.5 queues completed-lane results incrementally and retries when the
+output queue is full. Final lane data, placements, and the bracket winner are
+queued before `EVENT:TREE:RACE_COMPLETE`; the result hold begins only after
+that completion frame is queued. Diagnostics pause during final result delivery.
+Reaction, foul, and available interval data may be repeated in the final lane
+snapshot so a previously dropped live frame does not leave the result incomplete.
+
 `IDENTIFY` makes the controller resend its `HELLO` frame. DragWin uses this
 after a firmware upload so verification does not depend on catching the one
 startup transmission while the serial port is reopening.

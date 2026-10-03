@@ -315,6 +315,27 @@ public sealed class RaceRepository
                 .ToArray());
     }
 
+    public RoundPlan RecoverTournamentProgress(Tournament tournament, TournamentPlanner planner)
+    {
+        var round = GetLatestRound(tournament.Id);
+        while (IsRoundConfirmed(tournament.Id, round.RoundNumber))
+        {
+            var (cars, reactions) = GetRoundAdvancers(tournament.Id, round.RoundNumber);
+            if (cars.Count <= 1)
+            {
+                CompleteTournament(tournament.Id);
+                return round;
+            }
+
+            var nextRound = planner.CreateRound(
+                cars, tournament.LaneCount, round.RoundNumber + 1,
+                priorReactionMicroseconds: reactions);
+            SaveRound(tournament.Id, nextRound);
+            round = nextRound;
+        }
+        return round;
+    }
+
     public void UpdateHeatLanes(
         long tournamentId,
         int roundNumber,

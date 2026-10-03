@@ -59,3 +59,11 @@ jobs:
 
       - name: Compile DragMC
         run: arduino-cli compile --fqbn arduino:avr:mega:cpu=atmega2560 dragMC
+
+      - name: Test firmware result delivery
+        run: |
+          g++ -std=c++17 -I tools/firmware-tests tools/firmware-tests/results.cpp -o /tmp/drag-firmware-tests
+          /tmp/drag-firmware-tests
+
+      - name: Test speech helper
+        run: python3 -B -m unittest tools/test_drag_speech_helper.py
