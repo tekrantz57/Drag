@@ -103,8 +103,15 @@ try {
         } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $folder 'BUILD_INFO.json') -Encoding UTF8
 
         $archive = Join-Path $output "$name.zip"
-        [System.IO.Compression.ZipFile]::CreateFromDirectory(
-            $folder, $archive, [System.IO.Compression.CompressionLevel]::Optimal, $true)
+        $zip = [System.IO.Compression.ZipFile]::Open($archive, [System.IO.Compression.ZipArchiveMode]::Create)
+        try {
+            foreach ($file in Get-ChildItem -LiteralPath $folder -Recurse -File) {
+                $relative = $file.FullName.Substring($folder.Length + 1).Replace('\', '/')
+                [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+                    $zip, $file.FullName, "$name/$relative", [System.IO.Compression.CompressionLevel]::Optimal) | Out-Null
+            }
+        }
+        finally { $zip.Dispose() }
         $zip = [System.IO.Compression.ZipFile]::OpenRead($archive)
         try {
             if (!$zip.GetEntry("$name/dragWin.exe") -or !$zip.GetEntry("$name/Start-Demo.cmd")) {
