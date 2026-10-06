@@ -5,7 +5,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-Add-Type -AssemblyName System.IO.Compression.FileSystem
+Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
 $root = Split-Path $PSScriptRoot -Parent
 $project = Join-Path $root 'dragWin\dragWin.csproj'
 [xml]$projectXml = Get-Content -LiteralPath $project -Raw
