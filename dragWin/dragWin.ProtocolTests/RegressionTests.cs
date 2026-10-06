@@ -29,6 +29,7 @@ internal static class RegressionTests
         Directory.CreateDirectory(directory);
         try
         {
+            RunDemoReleaseTests(directory);
             var repository = new RaceRepository(Path.Combine(directory, "test.db"), Path.Combine(directory, "backups"));
             var racer = repository.AddRacer("Regression racer");
             var cars = Enumerable.Range(1, 4).Select(index =>
@@ -127,6 +128,61 @@ internal static class RegressionTests
         {
             Directory.Delete(directory, recursive: true);
         }
+    }
+
+    private static void RunDemoReleaseTests(string directory)
+    {
+        var repository = new RaceRepository(Path.Combine(directory, "demo.db"), Path.Combine(directory, "demo-backups"));
+        Check(repository.GetCars().Count == 0, "Demo test did not start with an empty database.");
+        using (var main = new MainForm(demoMode: true, repository: repository, settings: new AppSettings()))
+        {
+            _ = main.Handle;
+            Invoke(main, "TryAutoConnect");
+            Invoke(main, "ToggleConnection");
+            Check(!((DragSerialClient)Field(main, "client")).IsConnected, "Demo startup opened a serial port.");
+            Check(!((Button)Field(main, "connectButton")).Enabled, "Demo allowed a manual connection.");
+            Check(!((ToolStripMenuItem)Field(main, "updateControllerFirmwareMenuItem")).Enabled,
+                "Demo allowed a firmware update.");
+            Invoke(main, "DemoPracticeRun");
+            Check(Field(main, "passResultsForm") is PassResultsForm, "Demo practice did not open pass results.");
+            ((Form)Field(main, "passResultsForm")).Close();
+            main.Close();
+        }
+
+        var tournament = DemoTournamentFactory.Create(repository);
+        Check(repository.GetRacers().Count == 4 && repository.GetCars().Count == 8,
+            "Sample tournament did not supply four racers and eight cars.");
+        DemoTournamentFactory.Create(repository);
+        Check(repository.GetRacers().Count == 4 && repository.GetCars().Count == 8,
+            "Repeated sample creation duplicated racers or cars.");
+        using var client = new DragSerialClient();
+        using var runner = new TournamentRunnerForm(tournament, repository, client, 500, "BOTH_BLOCKED",
+            [1, 2, 3, 4], false, "", SpeechBackendMode.None, new TournamentReportExportOptions(), demoMode: true);
+        Check(((Button)Field(runner, "sendHeatButton")).Text == "Run Demo Heat", "Demo retained the hardware arm button.");
+        // Test report generation separately without a modal window blocking the test runner.
+        runner.GetType().GetField("completionReportShown", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(runner, true);
+        var heats = 0;
+        while (repository.GetTournamentReport(tournament.Id).Status != "COMPLETE" && heats < 20)
+        {
+            for (var choice = 0; Field(runner, "phase").ToString() == "ChoosingLanes" && choice < 4; ++choice)
+                Invoke(runner, "ConfirmLaneChoice");
+            Check(Field(runner, "phase").ToString() == "ReadyToStage", "Demo could not complete ordered lane choices.");
+            // Raise the same Click event as the demo's primary button, without needing a visible form.
+            typeof(Control).GetMethod("OnClick", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(Field(runner, "sendHeatButton"), [EventArgs.Empty]);
+            Check(Field(runner, "phase").ToString() == "ResultsReady", "Demo heat did not produce confirmable results.");
+            Invoke(runner, "ConfirmHeat");
+            runner.GetType().GetField("lastRunnerButtonActionAt", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(runner, default(DateTimeOffset));
+            ++heats;
+        }
+        var report = repository.GetTournamentReport(tournament.Id);
+        Check(report.Status == "COMPLETE" && heats > 1, "Multi-round sample tournament did not complete.");
+        Check(!client.IsConnected, "Demo tournament opened a controller connection.");
+        var paths = TournamentReportArchiveWriter.Write(report, Path.Combine(directory, "reports"));
+        Check(File.Exists(paths.Html) && File.Exists(paths.Json) && File.Exists(paths.Csv),
+            "Completed demo did not export HTML, JSON and CSV reports.");
     }
 
     private static object Field(object target, string name) =>

@@ -1,0 +1,28 @@
+DRAG - FREE SLOT-CAR DRAG RACING SOFTWARE
+Demo beta v0.10.0-beta.1
+
+No track or controller needed. No .NET installation needed.
+
+1. Extract ALL the files from the downloaded ZIP into a folder.
+2. Open that folder and double-click Start-Demo.cmd.
+3. Click New Demo Tournament. Sample racers and cars are supplied.
+
+In the tournament window:
+  Click Run Demo Heat.
+  Click Confirm Results to advance to the next heat.
+  In later rounds, click Confirm Current Lane Choice for each entrant
+  before generating the heat. You can keep the suggested lanes.
+  Repeat until the final report appears.
+
+For a quick practice pass instead:
+  On the main window, open Test and click Generate demo practice run.
+
+To stop: close the windows. Your demo tournament is saved automatically.
+You can resume it later with Run / Resume Tournament.
+
+This is an unsigned, experimental beta. Simulated results are not real race
+measurements. Four-lane track testing is still pending.
+Use only downloads you trust; do not turn off Windows security protections.
+
+TRY_DEMO.md has more details. The software is free and open source:
+https://github.com/tekrantz57/Drag

@@ -12,7 +12,8 @@ public sealed class MainForm : Form
     private const int TrimmedProtocolLogCharacters = 120_000;
 
     private readonly DragSerialClient client = new();
-    private readonly RaceRepository raceRepository = new();
+    private readonly RaceRepository raceRepository;
+    private readonly bool demoMode;
     private PassResultsForm? passResultsForm;
     private Form? controllerActivityForm;
     private bool connectionRequested;
@@ -21,7 +22,7 @@ public sealed class MainForm : Form
     private DateTimeOffset lastMainButtonActionAt;
     private DateTimeOffset? autoConnectDeadline;
     private string? rememberedControllerPortThisSession;
-    private AppSettings persistedSettings = AppSettingsStore.Load();
+    private AppSettings persistedSettings;
     private bool savedSettingsAppliedToController;
     private readonly ToolStripMenuItem configureRaceMenuItem = new("Race and track settings...");
     private readonly ToolStripMenuItem updateControllerFirmwareMenuItem = new("Update Controller Firmware...");
@@ -176,8 +177,11 @@ public sealed class MainForm : Form
     private int diagnosticsVersion;
     private bool firmwareUpdateActive;
 
-    public MainForm()
+    public MainForm(bool demoMode = false, RaceRepository? repository = null, AppSettings? settings = null)
     {
+        this.demoMode = demoMode;
+        raceRepository = repository ?? new RaceRepository();
+        persistedSettings = settings ?? AppSettingsStore.Load();
         var executableIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
         if (executableIcon is not null)
         {
@@ -186,6 +190,7 @@ public sealed class MainForm : Form
 
         string displayVersion = BuildIdentity.Current;
         Text = $"Drag Strip Controller {displayVersion}";
+        if (demoMode) Text += " - Demo";
         versionLabel.Text = displayVersion;
         MinimumSize = new Size(900, 430);
         Size = new Size(1100, 500);
@@ -243,6 +248,11 @@ public sealed class MainForm : Form
         connectButton.Click += (_, _) => RunMainButtonAction(connectButton, ToggleConnection);
         tournamentButton.Click += (_, _) => RunMainButtonAction(tournamentButton, () =>
         {
+            if (demoMode)
+            {
+                CreateSampleDemoTournament();
+                return;
+            }
             new TournamentSetupForm(raceRepository).ShowDialog(this);
             RefreshTournaments();
         });
@@ -284,11 +294,19 @@ public sealed class MainForm : Form
         heartbeatTimer.Start();
         Shown += (_, _) =>
         {
-            BeginInvoke(TryAutoConnect);
+            if (!demoMode) BeginInvoke(TryAutoConnect);
             BeginInvoke(CreateAutomaticDatabaseBackup);
         };
 
-        RefreshPorts();
+        if (demoMode)
+        {
+            tournamentButton.Text = "New Demo Tournament";
+            connectButton.Enabled = false;
+            refreshButton.Enabled = false;
+            portSelector.Enabled = false;
+            updateControllerFirmwareMenuItem.Enabled = false;
+        }
+        else RefreshPorts();
         RefreshTournaments();
         UpdateDialInputState();
         UpdateSettingsSummary();
@@ -513,6 +531,11 @@ public sealed class MainForm : Form
 
     private bool CanUpdateControllerFirmware(out string reason)
     {
+        if (demoMode)
+        {
+            reason = "Controller firmware updates are unavailable in demo mode.";
+            return false;
+        }
         if (firmwareUpdateActive)
         {
             reason = "A controller firmware update is already running.";
@@ -951,7 +974,7 @@ public sealed class MainForm : Form
 
     private void TryAutoConnect()
     {
-        if (connectionRequested)
+        if (demoMode || connectionRequested)
         {
             return;
         }
@@ -1104,12 +1127,33 @@ public sealed class MainForm : Form
             persistedSettings.SpeechBackend,
             new TournamentReportExportOptions(
                 persistedSettings.ExportTournamentJson,
-                persistedSettings.ExportTournamentCsv)).ShowDialog(this);
+                persistedSettings.ExportTournamentCsv),
+            demoMode: demoMode).ShowDialog(this);
         RefreshTournaments();
+    }
+
+    private void CreateSampleDemoTournament()
+    {
+        try
+        {
+            var tournament = DemoTournamentFactory.Create(raceRepository);
+            RefreshTournaments();
+            tournamentSelector.SelectedItem = tournamentSelector.Items.Cast<Tournament>()
+                .Single(item => item.Id == tournament.Id);
+            RunSelectedTournament();
+        }
+        catch (Exception exception) when (
+            exception is Microsoft.Data.Sqlite.SqliteException or IOException or
+                UnauthorizedAccessException or InvalidOperationException)
+        {
+            MessageBox.Show(this, exception.Message, "Demo tournament could not be created",
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 
     private void ToggleConnection()
     {
+        if (demoMode) return;
         try
         {
             if (connectionRequested)
@@ -1939,6 +1983,13 @@ public sealed class MainForm : Form
 
     private void UpdateConnectionLabel()
     {
+        if (demoMode)
+        {
+            connectionLabel.Text = "Demo - simulated results";
+            connectionLabel.BackColor = Color.FromArgb(218, 242, 225);
+            connectionLabel.ForeColor = Color.FromArgb(22, 92, 55);
+            return;
+        }
         if (!connectionRequested)
         {
             connectionLabel.Text = "Disconnected";

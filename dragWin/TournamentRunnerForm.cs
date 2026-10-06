@@ -124,6 +124,7 @@ public sealed class TournamentRunnerForm : Form
     private RunnerPhase phase;
     private bool heatArmed;
     private bool heatConfirmationSaved;
+    private readonly bool demoMode;
 
     public TournamentRunnerForm(
         Tournament tournament,
@@ -135,8 +136,10 @@ public sealed class TournamentRunnerForm : Form
         bool voiceAnnouncementsEnabled,
         string speechVoiceName,
         SpeechBackendMode speechBackend,
-        TournamentReportExportOptions reportExportOptions)
+        TournamentReportExportOptions reportExportOptions,
+        bool demoMode = false)
     {
+        this.demoMode = demoMode;
         this.tournament = tournament;
         this.repository = repository;
         this.client = client;
@@ -148,6 +151,11 @@ public sealed class TournamentRunnerForm : Form
         this.speechBackend = speechBackend;
         this.reportExportOptions = reportExportOptions;
         Text = $"Run Tournament - {tournament.Name}";
+        if (demoMode)
+        {
+            Text += " - Demo";
+            sendHeatButton.Text = "Run Demo Heat";
+        }
         MinimumSize = new Size(980, 680);
         Size = new Size(1180, 760);
         StartPosition = FormStartPosition.CenterParent;
@@ -209,7 +217,7 @@ public sealed class TournamentRunnerForm : Form
         lanesGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Result", HeaderText = "Outcome", ReadOnly = true, FillWeight = 85 });
         lanesGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Status", HeaderText = "Status", ReadOnly = true, FillWeight = 100 });
 
-        sendHeatButton.Click += (_, _) => RunRunnerButtonAction(sendHeatButton, SendHeat);
+        sendHeatButton.Click += (_, _) => RunRunnerButtonAction(sendHeatButton, demoMode ? DemoHeat : SendHeat);
         confirmLaneChoiceButton.Click += (_, _) => RunRunnerButtonAction(confirmLaneChoiceButton, ConfirmLaneChoice);
         confirmButton.Click += (_, _) => ConfirmHeat();
         rerunButton.Click += (_, _) => PrepareRerun();
@@ -510,6 +518,12 @@ public sealed class TournamentRunnerForm : Form
 
     private void UpdateConnectionStatus()
     {
+        if (demoMode)
+        {
+            connectionLabel.Text = "Demo - simulated results";
+            connectionLabel.ForeColor = Color.FromArgb(39, 122, 79);
+            return;
+        }
         if (!client.IsConnected)
         {
             connectionLabel.Text = "Controller disconnected";

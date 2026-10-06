@@ -1,7 +1,7 @@
 # Building From Source
 
-Drag is currently distributed as source. No prebuilt DragWin application
-package is offered through GitHub Releases.
+Drag is distributed as source and as experimental self-contained Windows beta
+packages through GitHub Releases. See [Try It Without Hardware](TRY_DEMO.md).
 
 ## Prerequisites
 
@@ -97,3 +97,19 @@ Before treating a commit as a public validation point:
 4. Confirm the source tree contains no database, log, report, backup, credential,
    IDE-user, or machine-local files.
 5. Follow only the commands in this document from a clean checkout.
+
+## Tagged Beta Packages
+
+After validation, commit the version and release notes and tag that exact
+commit (for example, `v0.10.0-beta.1`). From that clean, tagged checkout:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-Release.ps1
+```
+
+The script publishes self-contained x64 and ARM64 folders, adds the demo
+launcher, simple getting-started notes, licenses and source-commit metadata,
+rejects personal data and debugging files, and creates ZIPs plus SHA-256
+checksums under a fresh `artifacts/release` directory. It does not upload,
+create tags, or edit the source. Attach only the ZIPs and checksum file to a
+GitHub prerelease, using the matching release-notes document.
