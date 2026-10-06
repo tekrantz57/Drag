@@ -5,6 +5,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.IO.Compression.FileSystem
 $root = Split-Path $PSScriptRoot -Parent
 $project = Join-Path $root 'dragWin\dragWin.csproj'
 [xml]$projectXml = Get-Content -LiteralPath $project -Raw
@@ -59,6 +60,28 @@ try {
                 }
             }
         }
+        foreach ($framework in $assets.project.frameworks.PSObject.Properties.Value) {
+            foreach ($download in $framework.downloadDependencies) {
+                $packageVersion = [regex]::Match($download.version, '^\[([^,\]]+)').Groups[1].Value
+                if (!$packageVersion) { throw "Cannot determine runtime license version: $($download.name)" }
+                $found = $false
+                foreach ($packageRoot in $assets.packageFolders.PSObject.Properties.Name) {
+                    $package = Join-Path $packageRoot "$($download.name.ToLowerInvariant())\$packageVersion"
+                    if (!(Test-Path -LiteralPath $package)) { continue }
+                    $license = Join-Path $package 'LICENSE.TXT'
+                    $notices = Join-Path $package 'THIRD-PARTY-NOTICES.TXT'
+                    if (!(Test-Path -LiteralPath $license) -or !(Test-Path -LiteralPath $notices)) {
+                        throw "Runtime license files missing: $($download.name)"
+                    }
+                    $licenseFolder = Join-Path $folder "Licenses\$($download.name)-$packageVersion"
+                    New-Item -ItemType Directory -Path $licenseFolder -Force | Out-Null
+                    Copy-Item -LiteralPath $license, $notices -Destination $licenseFolder
+                    $found = $true
+                    break
+                }
+                if (!$found) { throw "Runtime package missing: $($download.name)" }
+            }
+        }
 
         $privateFiles = Get-ChildItem -LiteralPath $folder -Recurse -File | Where-Object {
             $_.Extension -in @('.db', '.sqlite', '.sqlite3', '.log', '.onnx', '.pdb') -or
@@ -79,7 +102,15 @@ try {
         } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $folder 'BUILD_INFO.json') -Encoding UTF8
 
         $archive = Join-Path $output "$name.zip"
-        Compress-Archive -LiteralPath $folder -DestinationPath $archive -CompressionLevel Optimal
+        [System.IO.Compression.ZipFile]::CreateFromDirectory(
+            $folder, $archive, [System.IO.Compression.CompressionLevel]::Optimal, $true)
+        $zip = [System.IO.Compression.ZipFile]::OpenRead($archive)
+        try {
+            if (!$zip.GetEntry("$name/dragWin.exe") -or !$zip.GetEntry("$name/Start-Demo.cmd")) {
+                throw "Release archive layout is incorrect: $archive"
+            }
+        }
+        finally { $zip.Dispose() }
         $archives += $archive
     }
     $archives | ForEach-Object {
