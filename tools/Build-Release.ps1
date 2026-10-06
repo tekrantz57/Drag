@@ -68,14 +68,15 @@ try {
                 foreach ($packageRoot in $assets.packageFolders.PSObject.Properties.Name) {
                     $package = Join-Path $packageRoot "$($download.name.ToLowerInvariant())\$packageVersion"
                     if (!(Test-Path -LiteralPath $package)) { continue }
-                    $license = Join-Path $package 'LICENSE.TXT'
-                    $notices = Join-Path $package 'THIRD-PARTY-NOTICES.TXT'
-                    if (!(Test-Path -LiteralPath $license) -or !(Test-Path -LiteralPath $notices)) {
+                    $licenseFiles = @(Get-ChildItem -LiteralPath $package -File | Where-Object {
+                        $_.Name -match '^(LICENSE|NOTICE|THIRD[-_]PARTY)' -and $_.Extension -in @('', '.txt', '.md')
+                    })
+                    if (!($licenseFiles | Where-Object { $_.Name -match '^LICENSE' })) {
                         throw "Runtime license files missing: $($download.name)"
                     }
                     $licenseFolder = Join-Path $folder "Licenses\$($download.name)-$packageVersion"
                     New-Item -ItemType Directory -Path $licenseFolder -Force | Out-Null
-                    Copy-Item -LiteralPath $license, $notices -Destination $licenseFolder
+                    $licenseFiles | Copy-Item -Destination $licenseFolder
                     $found = $true
                     break
                 }
