@@ -1298,7 +1298,7 @@ public sealed class MainForm : Form
             laneDialMilliseconds,
             bracketMode,
             splitSensorLanes: persistedSettings.IntervalTimerLanes).ToArray();
-        var resultsForm = BeginPracticePassResults(selectedLanes);
+        var resultsForm = BeginPracticePassResults(selectedLanes, simulated: true);
         resultsForm.ProcessMessages(messages);
 
         AppendLog($"DEMO: Practice run started for lane(s): {string.Join(", ", selectedLanes)}.");
@@ -1310,7 +1310,7 @@ public sealed class MainForm : Form
         AppendPracticeSummary(messages);
     }
 
-    private PassResultsForm BeginPracticePassResults(IReadOnlyCollection<int> lanes)
+    private PassResultsForm BeginPracticePassResults(IReadOnlyCollection<int> lanes, bool simulated = false)
     {
         if (passResultsForm is null || passResultsForm.IsDisposed)
         {
@@ -1331,7 +1331,7 @@ public sealed class MainForm : Form
             persistedSettings.VoiceAnnouncementsEnabled,
             persistedSettings.SpeechVoiceName,
             persistedSettings.SpeechBackend);
-        passResultsForm.BeginPass(lanes, persistedSettings.IntervalTimerLanes);
+        passResultsForm.BeginPass(lanes, persistedSettings.IntervalTimerLanes, simulated);
         return passResultsForm;
     }
 

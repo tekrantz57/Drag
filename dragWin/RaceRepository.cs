@@ -5,7 +5,7 @@ namespace DragWin;
 
 public sealed class RaceRepository
 {
-    private const int CurrentSchemaVersion = 4;
+    private const int CurrentSchemaVersion = 5;
     private readonly string connectionString;
     private readonly string automaticBackupDirectory;
 
@@ -455,9 +455,9 @@ public sealed class RaceRepository
                 INSERT OR REPLACE INTO heat_results(
                     heat_entry_id, legality, finish_order, reaction_us,
                     breakout_us, advanced, elapsed_us, speed_mph_x100,
-                    split_sensors_enabled, split1_us, split2_us, speed_trap_us)
+                    split_sensors_enabled, split1_us, split2_us, speed_trap_us, result_source)
                 SELECT he.id, $legality, $finish, $reaction, $breakout, $advanced,
-                       $elapsed, $speed, $splitsEnabled, $split1, $split2, $speedTrap
+                       $elapsed, $speed, $splitsEnabled, $split1, $split2, $speedTrap, $source
                 FROM heat_entries he
                 JOIN heats h ON h.id = he.heat_id
                 JOIN rounds ro ON ro.id = h.round_id
@@ -480,6 +480,7 @@ public sealed class RaceRepository
             command.Parameters.AddWithValue(
                 "$speed", (object?)result.SpeedMphX100 ?? DBNull.Value);
             command.Parameters.AddWithValue("$splitsEnabled", result.IntervalTimersEnabled ? 1 : 0);
+            command.Parameters.AddWithValue("$source", result.Source.ToString());
             command.Parameters.AddWithValue(
                 "$split1", (object?)result.Interval1Microseconds ?? DBNull.Value);
             command.Parameters.AddWithValue(
@@ -634,7 +635,7 @@ public sealed class RaceRepository
                    he.is_bye, hr.legality, hr.finish_order, hr.reaction_us,
                    hr.breakout_us, hr.advanced, hc.confirmed_utc,
                    hr.elapsed_us, hr.speed_mph_x100, hr.split_sensors_enabled,
-                   hr.split1_us, hr.split2_us, hr.speed_trap_us
+                   hr.split1_us, hr.split2_us, hr.speed_trap_us, hr.result_source
             FROM rounds ro
             JOIN heats h ON h.round_id = ro.id
             JOIN heat_entries he ON he.heat_id = h.id
@@ -687,7 +688,9 @@ public sealed class RaceRepository
                 !reader.IsDBNull(16) && reader.GetInt32(16) != 0,
                 reader.IsDBNull(17) ? null : reader.GetInt64(17),
                 reader.IsDBNull(18) ? null : reader.GetInt64(18),
-                reader.IsDBNull(19) ? null : reader.GetInt64(19)));
+                reader.IsDBNull(19) ? null : reader.GetInt64(19),
+                !reader.IsDBNull(20) && Enum.TryParse<ResultSource>(reader.GetString(20), out var source)
+                    ? source : ResultSource.Unknown));
         }
 
         return new TournamentReport(tournament, status, createdAt, rows);
@@ -998,7 +1001,8 @@ public sealed class RaceRepository
             ("split_sensors_enabled", "INTEGER NOT NULL DEFAULT 0 CHECK(split_sensors_enabled IN (0, 1))"),
             ("split1_us", "INTEGER"),
             ("split2_us", "INTEGER"),
-            ("speed_trap_us", "INTEGER")
+            ("speed_trap_us", "INTEGER"),
+            ("result_source", "TEXT NOT NULL DEFAULT 'Unknown'")
         };
         foreach (var addition in additions.Where(item => !columns.Contains(item.Name)))
         {

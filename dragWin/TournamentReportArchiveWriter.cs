@@ -22,7 +22,7 @@ public sealed record TournamentReportExportOptions(
 
 public static class TournamentReportArchiveWriter
 {
-    public const int CurrentSchemaVersion = 2;
+    public const int CurrentSchemaVersion = 3;
 
     private static readonly UTF8Encoding Utf8NoBom = new(false);
 
@@ -81,7 +81,7 @@ public static class TournamentReportArchiveWriter
             "ElapsedMicroseconds", "SpeedMphX100", "IntervalTimersEnabled",
             "Interval1Microseconds", "Interval2Microseconds", "SpeedTrapMicroseconds",
             "Interval1ToInterval2Microseconds", "Interval2ToSpeedTrapMicroseconds",
-            "SpeedTrapToFinishMicroseconds", "Advanced", "ConfirmedUtc");
+            "SpeedTrapToFinishMicroseconds", "Advanced", "ConfirmedUtc", "ResultSource");
         foreach (var row in report.Rows.OrderBy(row => row.RoundNumber)
                      .ThenBy(row => row.HeatNumber)
                      .ThenBy(row => row.LaneNumber))
@@ -115,7 +115,8 @@ public static class TournamentReportArchiveWriter
                 row.Interval2ToSpeedTrapMicroseconds,
                 row.SpeedTrapToFinishMicroseconds,
                 row.Advanced,
-                row.ConfirmedAt?.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture));
+                row.ConfirmedAt?.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture),
+                row.Source);
         }
         return csv.ToString();
     }

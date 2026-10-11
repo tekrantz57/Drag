@@ -26,3 +26,6 @@ Use only downloads you trust; do not turn off Windows security protections.
 
 TRY_DEMO.md has more details. The software is free and open source:
 https://github.com/tekrantz57/Drag
+
+Found a bug? Include your version and what happened:
+https://github.com/tekrantz57/Drag/issues/new/choose

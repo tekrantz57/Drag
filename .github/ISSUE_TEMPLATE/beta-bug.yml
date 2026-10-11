@@ -1,0 +1,50 @@
+name: Beta Bug Report
+description: Report an installation problem, crash, incorrect result, or blocked workflow.
+title: "[Beta bug] "
+body:
+  - type: markdown
+    attributes:
+      value: "Thanks for testing Drag. Remove private racer information, credentials, and local paths from attachments. Please do not upload your database."
+  - type: input
+    id: version
+    attributes:
+      label: Drag Version
+      description: Version shown on the main window.
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Operating System And Computer Type
+      placeholder: Windows 11 x64, Windows ARM64, or Linux with Wine version
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Race Mode
+      options:
+        - Demo / simulated results
+        - Controller / physical track
+        - Mixed simulated and controller heats
+        - Installation or startup problem
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps To Reproduce
+      description: What did you click or do, and what happened?
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Result
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Additional Details
+      description: Error text or a sanitized screenshot/log excerpt. For hardware, include firmware version, controller model, lane count, and sensor wiring.

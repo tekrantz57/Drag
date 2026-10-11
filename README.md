@@ -39,8 +39,9 @@ Lane 1 has four LM393 sensors wired and electrically validated. Sensor Test
 reported every input, and cardboard beam interruptions completed multiple
 end-to-end passes. A normal car has not yet completed that test because the
 3/4-inch track deck leaves the present optical paths below the guide flag. The
-planned correction is shallow routed mounting pockets, longer optical-component
-leads, or both.
+venue owner does not want to route the track. The current prototype plan is to
+extend the original interrupter's leads and remount it on the underside of the
+LM393 PCB, reconnecting by electrical function because the footprint is mirrored.
 
 The two optional interval sensors per lane are implemented in firmware,
 diagnostics, pass results, tournament history, and exports, but are not yet
@@ -123,6 +124,8 @@ sharing any diagnostic material.
 
 - [Building from source](docs/BUILDING.md)
 - [Try it without hardware](docs/TRY_DEMO.md)
+- [Beta feedback and result-source labels](docs/BETA_FEEDBACK.md)
+- [Beta package verification](docs/BETA_VERIFICATION.md)
 - [Current project status](docs/PROJECT_STATUS.md)
 - [Hardware and wiring](HARDWARE.md)
 - [Tournament behavior](docs/TOURNAMENTS.md)
@@ -136,8 +139,9 @@ sharing any diagnostic material.
 - [Third-party notices](THIRD_PARTY_NOTICES.md)
 
 The canonical repository is maintainer-controlled and is currently published
-for reference rather than as a contribution or support venue. See
-[CONTRIBUTING.md](CONTRIBUTING.md).
+as an experimental beta. Report reproducible beta bugs through
+[GitHub Issues](https://github.com/tekrantz57/Drag/issues/new/choose); there is no
+guaranteed support response. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

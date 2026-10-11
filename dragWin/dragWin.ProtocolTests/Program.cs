@@ -693,7 +693,7 @@ try
     _ = new RaceRepository(databasePath, automaticBackupDirectory);
     Assert(Directory.EnumerateFiles(
             automaticBackupDirectory,
-            "dragWin-before-schema-v3-to-v4-*.db").Any(),
+            "dragWin-before-schema-v3-to-v5-*.db").Any(),
         "A pre-migration safety backup should be created.");
 }
 finally

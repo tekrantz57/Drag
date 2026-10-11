@@ -145,6 +145,9 @@ internal static class RegressionTests
                 "Demo allowed a firmware update.");
             Invoke(main, "DemoPracticeRun");
             Check(Field(main, "passResultsForm") is PassResultsForm, "Demo practice did not open pass results.");
+            var practiceGrid = (DataGridView)Field(Field(main, "passResultsForm"), "resultsGrid");
+            Check(practiceGrid.Rows.Cast<DataGridViewRow>().All(row =>
+                row.Cells["Source"].Value?.ToString() == "Simulated"), "Practice demo omitted source labels.");
             ((Form)Field(main, "passResultsForm")).Close();
             main.Close();
         }
@@ -183,6 +186,33 @@ internal static class RegressionTests
         var paths = TournamentReportArchiveWriter.Write(report, Path.Combine(directory, "reports"));
         Check(File.Exists(paths.Html) && File.Exists(paths.Json) && File.Exists(paths.Csv),
             "Completed demo did not export HTML, JSON and CSV reports.");
+        var reopened = new RaceRepository(repository.DatabasePath, Path.Combine(directory, "demo-backups"));
+        var savedReport = reopened.GetTournamentReport(tournament.Id);
+        Check(savedReport.Rows.All(row => row.Source == ResultSource.Simulated),
+            "Reopening a demo tournament lost its simulated source.");
+        Check(savedReport.HasSimulatedResults, "Demo report did not identify simulated results.");
+        Check(File.ReadAllText(paths.Html).Contains("SIMULATED RESULTS INCLUDED"),
+            "Demo HTML omitted its simulation warning.");
+        Check(File.ReadAllText(paths.Csv!).Contains("ResultSource") &&
+              File.ReadAllText(paths.Csv!).Contains(",Simulated"), "Demo CSV omitted result sources.");
+        using var json = System.Text.Json.JsonDocument.Parse(File.ReadAllText(paths.Json!));
+        Check(json.RootElement.GetProperty("tournamentReport").GetProperty("rows")
+            .EnumerateArray().All(row => row.GetProperty("source").GetString() == "Simulated"),
+            "Demo JSON omitted result sources.");
+
+        var firstRound = reopened.GetLatestRound(tournament.Id);
+        var firstHeat = firstRound.Heats[0];
+        var controllerResults = firstHeat.Entries.Select((entry, index) => new RunResult(
+            entry.Car.Id, RunLegality.Legal, index + 1, 100000, null, entry.IsBye,
+            Source: ResultSource.Controller)).ToArray();
+        reopened.SaveHeatResults(tournament.Id, firstRound.RoundNumber, firstHeat.HeatNumber,
+            controllerResults, controllerResults.Take(1).Select(result => result.CarId).ToHashSet());
+        var mixed = reopened.GetTournamentReport(tournament.Id);
+        Check(mixed.HasSimulatedResults && mixed.Rows.Any(row => row.Source == ResultSource.Controller),
+            "Mixed tournament lost per-result provenance.");
+        var mixedPaths = TournamentReportArchiveWriter.Write(mixed, Path.Combine(directory, "mixed"));
+        Check(File.ReadAllText(mixedPaths.Html).Contains("SIMULATED RESULTS INCLUDED") &&
+              File.ReadAllText(mixedPaths.Csv!).Contains(",Controller"), "Mixed report omitted source labels.");
     }
 
     private static object Field(object target, string name) =>

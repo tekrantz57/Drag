@@ -118,9 +118,9 @@ car guide flag to reach and interrupt it. This is a physical mounting-height
 issue; the four lane 1 sensors and the complete timing workflow have already
 been validated with cardboard beam interruptions.
 
-Raise the optical path into the guide flag's reach by routing shallow pockets
-for the sensor assemblies, fitting emitters and detectors with longer leads,
-or combining both methods. Preserve clearance so the guide cannot strike the
+The venue owner does not want to route the track. The current plan is to raise
+the optical path by extending the original interrupter's leads and remounting
+it on the underside of the LM393 PCB. Preserve clearance so the guide cannot strike the
 components. Insulate and strain-relieve extended leads, then secure the final
 alignment against vibration before collecting moving-car pulse widths.
 
@@ -154,7 +154,7 @@ Do not assume that the existing interrupter is a particular H2010 variant from
 an online summary. Generic parts and modules use that name inconsistently, and
 commonly advertised H2010 LM393 modules have a 10 mm slot. Measure the actual
 interrupter's slot, body, and hole centers with calipers before selecting a
-replacement or routing the track. Prototype one assembly and validate it with
+replacement. Prototype one assembly and validate it with
 the Sensor Test edge counts and pulse durations before modifying the remaining
 sensors.
 

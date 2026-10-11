@@ -60,6 +60,7 @@ public sealed class PassResultsForm : Form
         AddColumn("Speed", "MPH", 50);
         AddColumn("Place", "Place", 38);
         AddColumn("Outcome", "Outcome", 100);
+        AddColumn("Source", "Source", 65);
 
         var clearButton = new Button { Text = "Clear", AutoSize = true, MinimumSize = new Size(70, 28) };
         var closeButton = new Button { Text = "Close", AutoSize = true, MinimumSize = new Size(80, 28) };
@@ -117,7 +118,8 @@ public sealed class PassResultsForm : Form
 
     public void BeginPass(
         IReadOnlyCollection<int> lanes,
-        IReadOnlyCollection<int> splitSensorLanes)
+        IReadOnlyCollection<int> splitSensorLanes,
+        bool simulated = false)
     {
         ArgumentNullException.ThrowIfNull(lanes);
         if (lanes.Count == 0)
@@ -145,7 +147,8 @@ public sealed class PassResultsForm : Form
                 "",
                 "",
                 "",
-                "Armed");
+                "Armed",
+                simulated ? "Simulated" : "Controller");
             currentResults[lane] = new PassLaneResult(resultsGrid.Rows[rowIndex])
             {
                 SplitSensorsEnabled = splitSensorLanes.Contains(lane)

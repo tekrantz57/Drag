@@ -123,6 +123,7 @@ public sealed class TournamentRunnerForm : Form
     private DateTimeOffset lastRunnerButtonActionAt;
     private RunnerPhase phase;
     private bool heatArmed;
+    private bool currentHeatSimulated;
     private bool heatConfirmationSaved;
     private readonly bool demoMode;
 
@@ -655,6 +656,7 @@ public sealed class TournamentRunnerForm : Form
                 entry.DialMilliseconds.ToString()]);
         }
         commands.Add(["RESET"]);
+        currentHeatSimulated = false;
         client.SendBatch(commands);
         heatArmed = true;
         AddTimeline("Heat armed. Stage only the displayed lanes.");
@@ -682,6 +684,7 @@ public sealed class TournamentRunnerForm : Form
         if (assignments is null || !ApplyHeatGridInputs(assignments)) return false;
 
         AddTimeline("TEST: Simulated heat results generated.");
+        currentHeatSimulated = true;
         sendHeatButton.Enabled = false;
         SetPhase(RunnerPhase.Racing);
         heatArmed = true;
@@ -1021,7 +1024,8 @@ public sealed class TournamentRunnerForm : Form
             live.SplitSensorsEnabled,
             live.Split1Us,
             live.Split2Us,
-            live.SpeedTrapUs);
+            live.SpeedTrapUs,
+            currentHeatSimulated ? ResultSource.Simulated : ResultSource.Controller);
     }).ToArray();
 
     private void ShowResultsSummary()

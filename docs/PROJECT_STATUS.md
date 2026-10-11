@@ -43,8 +43,10 @@ See `TRY_DEMO.md`; four-lane physical validation is still pending.
 
 The current lane 1 optical path is below the reach of a normal car guide flag
 because the track deck is 3/4 inch thick. The electronics and timing path work
-with cardboard interruptions, but moving-car validation waits on raised optical
-components, routed mounting pockets, or both.
+with cardboard interruptions. The venue owner has ruled out routing the track;
+moving-car validation waits on a prototype using the original interrupter with
+extended leads, remounted on the opposite side of the LM393 PCB and mechanically
+supported. Reconnect each terminal by function, not mirrored pad position.
 
 ## Still Pending
 

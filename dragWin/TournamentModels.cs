@@ -40,6 +40,13 @@ public enum RunLegality
     DidNotFinish
 }
 
+public enum ResultSource
+{
+    Unknown,
+    Controller,
+    Simulated
+}
+
 public sealed record RunResult(
     long CarId,
     RunLegality Legality,
@@ -52,7 +59,8 @@ public sealed record RunResult(
     bool IntervalTimersEnabled = false,
     long? Interval1Microseconds = null,
     long? Interval2Microseconds = null,
-    long? SpeedTrapMicroseconds = null);
+    long? SpeedTrapMicroseconds = null,
+    ResultSource Source = ResultSource.Unknown);
 
 public sealed record TournamentReport(
     Tournament Tournament,
@@ -60,6 +68,8 @@ public sealed record TournamentReport(
     DateTimeOffset CreatedAt,
     IReadOnlyList<TournamentReportRow> Rows)
 {
+    public bool HasSimulatedResults => Rows.Any(row => row.Source == ResultSource.Simulated);
+
     public TournamentReportRow? Winner => Rows
         .Where(row => row.Advanced)
         .OrderByDescending(row => row.RoundNumber)
@@ -87,7 +97,8 @@ public sealed record TournamentReportRow(
     bool IntervalTimersEnabled = false,
     long? Interval1Microseconds = null,
     long? Interval2Microseconds = null,
-    long? SpeedTrapMicroseconds = null)
+    long? SpeedTrapMicroseconds = null,
+    ResultSource Source = ResultSource.Unknown)
 {
     public long? Interval1ToInterval2Microseconds =>
         Segment(Interval1Microseconds, Interval2Microseconds);

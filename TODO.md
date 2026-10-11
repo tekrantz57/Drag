@@ -3,9 +3,10 @@
 ## Track sensor validation
 
 - Raise the lane 1 optical paths so normal car guide flags can interrupt them
-  despite the 3/4-inch track deck. Evaluate shallow routed mounting pockets,
-  longer emitter/detector leads, or both, while retaining guide clearance and
-  rigid alignment.
+  despite the 3/4-inch track deck. The venue owner does not want routing. Prototype
+  extended leads on the original interrupter and remount it on the underside of
+  its PCB, reconnecting the mirrored footprint by electrical function. Retain
+  guide clearance, insulated leads, mechanical support, and rigid alignment.
 - After the mounting-height correction, run moving-car tests on lane 1 A0-A3
   and record the raw pulse widths reported by Sensor Test at representative
   speeds. Cardboard interruptions have already validated all four sensors and

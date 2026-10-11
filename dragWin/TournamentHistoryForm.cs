@@ -44,6 +44,7 @@ public sealed class TournamentHistoryForm : Form
         grid.Columns.Add("Speed", "MPH");
         grid.Columns.Add("Outcome", "Outcome");
         grid.Columns.Add("Advanced", "Advanced");
+        grid.Columns.Add("Source", "Source");
         grid.Columns["Round"]!.FillWeight = 35;
         grid.Columns["Heat"]!.FillWeight = 35;
         grid.Columns["Lane"]!.FillWeight = 35;
@@ -59,6 +60,7 @@ public sealed class TournamentHistoryForm : Form
         grid.Columns["Speed"]!.FillWeight = 42;
         grid.Columns["Outcome"]!.FillWeight = 70;
         grid.Columns["Advanced"]!.FillWeight = 50;
+        grid.Columns["Source"]!.FillWeight = 65;
 
         var confirmedRows = report.Rows.Where(row => row.ConfirmedAt.HasValue).ToArray();
         foreach (var row in confirmedRows)
@@ -82,7 +84,8 @@ public sealed class TournamentHistoryForm : Form
                     ? (row.SpeedMphX100.Value / 100.0).ToString("0.00", CultureInfo.CurrentCulture)
                     : "",
                 FormatOutcome(row),
-                row.Advanced ? "Yes" : "No");
+                row.Advanced ? "Yes" : "No",
+                row.Source);
             if (row.Advanced)
             {
                 grid.Rows[rowIndex].DefaultCellStyle.BackColor = Color.FromArgb(218, 242, 225);

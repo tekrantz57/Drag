@@ -66,3 +66,11 @@ enabled in Race Settings; Piper requires a separate installation and model.
 This is an experimental beta. Complete moving-car and simultaneous four-lane
 hardware validation is still pending. The bundled controller firmware is
 **DragMC 0.6.5**, but it is not needed for the demo.
+
+## Report A Beta Bug
+
+Use the [Beta Bug Report](https://github.com/tekrantz57/Drag/issues/new/choose)
+for installation problems, crashes, incorrect results, or a blocked workflow.
+Include the version, operating system, and steps to reproduce. Remove private
+data from attachments; do not upload your database. Support is best-effort.
+See [Beta Feedback](BETA_FEEDBACK.md) for result-source labels in newer builds.

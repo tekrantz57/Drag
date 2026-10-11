@@ -44,3 +44,14 @@ First packaged beta for trying DragWin without a track or controller.
   revalidated on those Linux machines.
 
 No personal database, settings, logs, backups, or reports are included.
+
+## Beta Feedback
+
+Report installation problems, crashes, incorrect results, or blocked workflows
+through [GitHub Issues](https://github.com/tekrantz57/Drag/issues/new/choose).
+Include the version, operating system, demo or hardware mode, and reproduction
+steps. Remove private data from attachments; do not upload your database.
+Support is best-effort, not guaranteed.
+
+This package predates per-result source labels. Keep demo tournaments clearly
+named; explicit Simulated/Controller labels will arrive in the next packaged beta.
