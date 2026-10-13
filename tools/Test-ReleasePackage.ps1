@@ -21,7 +21,8 @@ $zip = [IO.Compression.ZipFile]::OpenRead($archivePath)
 try {
     $root = [IO.Path]::GetFileNameWithoutExtension($name)
     foreach ($required in @('dragWin.exe', 'hostfxr.dll', 'Start-Demo.cmd', 'START_HERE.txt',
-                            'TRY_DEMO.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'BUILD_INFO.json')) {
+                            'TRY_DEMO.md', 'BETA_FEEDBACK.md', 'COMMISSIONING_CHECKLIST.md',
+                            'LICENSE', 'THIRD_PARTY_NOTICES.md', 'BUILD_INFO.json')) {
         if (!$zip.GetEntry("$root/$required")) { throw "Missing $required" }
     }
     $privateFiles = @($zip.Entries | Where-Object {

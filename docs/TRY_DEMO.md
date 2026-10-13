@@ -2,8 +2,8 @@
 
 ## Download And Start
 
-1. Download `DragWin-v0.10.0-beta.1-win-x64.zip` from the
-   [GitHub prerelease](https://github.com/tekrantz57/Drag/releases/tag/v0.10.0-beta.1).
+1. Download `DragWin-v0.10.0-beta.2-win-x64.zip` from the
+   [GitHub prerelease](https://github.com/tekrantz57/Drag/releases/tag/v0.10.0-beta.2).
    Most Intel and AMD Windows computers use this package. Use the `win-arm64`
    package only for Windows on ARM.
 2. Right-click the ZIP and choose **Extract All**. Keep all extracted files
@@ -60,6 +60,10 @@ give demo tournaments recognizable names; do not use demo results as real
 race records. **File > Open Database Folder** and **File > Open Backup Folder**
 show the local storage locations.
 
+Saved tournament rows identify their source as Simulated or Controller in history
+and HTML/JSON/CSV exports. Reports containing simulated rows carry a warning.
+Practice results also include a Source column.
+
 Voice announcements are optional and off by default. Windows voices can be
 enabled in Race Settings; Piper requires a separate installation and model.
 
@@ -73,4 +77,6 @@ Use the [Beta Bug Report](https://github.com/tekrantz57/Drag/issues/new/choose)
 for installation problems, crashes, incorrect results, or a blocked workflow.
 Include the version, operating system, and steps to reproduce. Remove private
 data from attachments; do not upload your database. Support is best-effort.
-See [Beta Feedback](BETA_FEEDBACK.md) for result-source labels in newer builds.
+Help > Copy Version Information supplies the build and platform details without
+private racer data. Help also links to instructions, wiring, and the commissioning
+checklist. See [Beta Feedback](BETA_FEEDBACK.md) for result-source labels.

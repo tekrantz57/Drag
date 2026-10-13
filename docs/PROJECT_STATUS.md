@@ -4,7 +4,7 @@ Drag is an experimental slot-car drag timing and tournament-control project.
 Its software workflows are substantially implemented, while full physical-track
 validation remains in progress.
 
-The current packaged beta milestone is `v0.10.0-beta.1`. DragWin displays the
+The current packaged beta milestone is `v0.10.0-beta.2`. DragWin displays the
 exact Git tag for tagged builds and includes commit and dirty-state details for
 development builds.
 
@@ -19,6 +19,9 @@ See `TRY_DEMO.md`; four-lane physical validation is still pending.
 - Practice passes, tournaments, lane choice, byes, history, reports, exports,
   backups, restore, diagnostics, and optional SAPI, Piper, or eSpeak NG voice
   announcements.
+- Help menu with documentation, beta bug reports, and copyable version information.
+- Per-result simulation labels in history and exports, landscape report printing,
+  and a four-lane commissioning worksheet.
 - Four required and two optional sensor positions per lane throughout firmware,
   protocol, diagnostics, results, persistence, and reports.
 - Firmware-maintained raw edge counts and blocked-pulse durations.

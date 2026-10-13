@@ -5,8 +5,8 @@ Arduino Mega 2560 owns beam timing, Tree sequencing, and immediate race logic;
 a .NET 10 Windows Forms application handles operator workflow, practice passes,
 tournaments, reports, diagnostics, backups, and controller firmware updates.
 
-> **Demo-ready beta (`v0.10.0-beta.1`):** Self-contained Windows x64 and ARM64
-> packages are available in the [GitHub prerelease](https://github.com/tekrantz57/Drag/releases/tag/v0.10.0-beta.1).
+> **Demo-ready beta (`v0.10.0-beta.2`):** Self-contained Windows x64 and ARM64
+> packages are available in the [GitHub prerelease](https://github.com/tekrantz57/Drag/releases/tag/v0.10.0-beta.2).
 > Extract the ZIP and run **Start-Demo.cmd** to try simulated races without
 > a controller. See [Try It Without Hardware](docs/TRY_DEMO.md).
 > Complete moving-car and four-lane hardware validation is still pending;
@@ -128,6 +128,7 @@ sharing any diagnostic material.
 - [Beta package verification](docs/BETA_VERIFICATION.md)
 - [Current project status](docs/PROJECT_STATUS.md)
 - [Hardware and wiring](HARDWARE.md)
+- [Four-lane commissioning checklist](docs/COMMISSIONING_CHECKLIST.md)
 - [Tournament behavior](docs/TOURNAMENTS.md)
 - [Controller firmware updates](docs/CONTROLLER_FIRMWARE_UPDATE.md)
 - [Linux speech under Wine](docs/LINUX_SPEECH.md)

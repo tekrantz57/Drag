@@ -39,6 +39,7 @@ try {
         Copy-Item -LiteralPath (Join-Path $root 'docs\START_HERE.txt') -Destination $folder
         Copy-Item -LiteralPath (Join-Path $root 'docs\TRY_DEMO.md') -Destination $folder
         Copy-Item -LiteralPath (Join-Path $root 'docs\BETA_FEEDBACK.md') -Destination $folder
+        Copy-Item -LiteralPath (Join-Path $root 'docs\COMMISSIONING_CHECKLIST.md') -Destination $folder
         Copy-Item -LiteralPath (Join-Path $root 'LICENSE') -Destination $folder
         Copy-Item -LiteralPath (Join-Path $root 'THIRD_PARTY_NOTICES.md') -Destination $folder
         Copy-Item -LiteralPath (Join-Path $root "docs\RELEASE_$version.md") `

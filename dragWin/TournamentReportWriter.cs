@@ -104,11 +104,36 @@ public static class TournamentReportWriter
               padding-top: 0.7rem;
               font-size: 0.85rem;
             }
+            @page { size: landscape; margin: 0.4in; }
             @media print {
-              body { margin: 0.5in; }
-              .card { break-inside: avoid; }
-              table { break-inside: auto; }
-              tr { break-inside: avoid; }
+              body { margin: 0; font-size: 9pt; line-height: 1.25; }
+              h1 { font-size: 18pt; }
+              h2 { font-size: 13pt; }
+              h3 { font-size: 11pt; }
+              h1, h2, h3 { break-after: avoid; page-break-after: avoid; }
+              .summary { display: block; margin: 0.5rem 0; }
+              .card {
+                display: inline-block; min-width: 0; padding: 0.3rem 0.5rem;
+                margin: 0 0.3rem 0.3rem 0; border-radius: 0;
+                break-inside: avoid; page-break-inside: avoid;
+              }
+              .label { font-size: 8pt; letter-spacing: 0; }
+              .value { font-size: 10pt; }
+              table { table-layout: fixed; break-inside: auto; margin: 0.4rem 0 0.8rem; }
+              thead { display: table-header-group; }
+              tbody { display: table-row-group; }
+              tr { break-inside: avoid; page-break-inside: avoid; }
+              th, td {
+                padding: 0.2rem; font-size: 8pt; line-height: 1.2;
+                overflow-wrap: anywhere; word-wrap: break-word;
+              }
+              th { background: #eee; color: #111; }
+              col.lane { width: 4%; }
+              col.name { width: 9%; }
+              col.standard { width: 5%; }
+              col.wide { width: 6%; }
+              col.finish { width: 4%; }
+              col.source { width: 9%; }
             }
             </style>
             """);
@@ -157,8 +182,9 @@ public static class TournamentReportWriter
                 builder.AppendLine("</h3>");
 
                 builder.AppendLine("<table>");
+                builder.AppendLine("<colgroup><col class=\"lane\"><col class=\"name\"><col class=\"name\"><col class=\"standard\"><col class=\"wide\"><col class=\"finish\"><col class=\"standard\"><col class=\"standard\"><col class=\"standard\"><col class=\"wide\"><col class=\"wide\"><col class=\"standard\"><col class=\"standard\"><col class=\"wide\"><col class=\"wide\"><col class=\"standard\"><col class=\"source\"></colgroup>");
                 builder.AppendLine(
-                    "<thead><tr><th>Lane</th><th>Racer</th><th>Car</th><th>Dial</th><th>Legality</th><th>Finish</th><th>Reaction</th><th>ET</th><th>MPH</th><th>Interval 1</th><th>Interval 2</th><th>I1-I2</th><th>I2-Trap</th><th>Trap-Finish</th><th>Breakout</th><th>Advanced</th><th>Result Source</th></tr></thead>");
+                    "<thead><tr><th>Lane</th><th>Racer</th><th>Car</th><th>Dial</th><th>Legality</th><th>Finish</th><th>RT</th><th>ET</th><th>MPH</th><th>Interval 1</th><th>Interval 2</th><th>I1-I2</th><th>I2-Trap</th><th>Trap-Finish</th><th>Breakout</th><th>Adv.</th><th>Result Source</th></tr></thead>");
                 builder.AppendLine("<tbody>");
                 foreach (var row in heatGroup.OrderBy(row => row.LaneNumber))
                 {

@@ -1,5 +1,5 @@
 DRAG - FREE SLOT-CAR DRAG RACING SOFTWARE
-Demo beta v0.10.0-beta.1
+Demo beta v0.10.0-beta.2
 
 No track or controller needed. No .NET installation needed.
 
@@ -29,3 +29,6 @@ https://github.com/tekrantz57/Drag
 
 Found a bug? Include your version and what happened:
 https://github.com/tekrantz57/Drag/issues/new/choose
+
+The Help menu links to instructions and can copy your version information.
+COMMISSIONING_CHECKLIST.md is for the venue's four-lane hardware bring-up.

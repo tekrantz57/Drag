@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace DragWin;
@@ -345,8 +346,58 @@ public sealed class MainForm : Form
         ]);
         var testMenu = new ToolStripMenuItem("Test");
         testMenu.DropDownItems.Add(demoPracticeMenuItem);
-        menuStrip.Items.AddRange([fileMenu, configureMenu, diagnosticsMenu, testMenu]);
+        var helpMenu = new ToolStripMenuItem("Help");
+        helpMenu.DropDownItems.Add(CreateHelpLink("Try the demo", "docs/TRY_DEMO.md"));
+        helpMenu.DropDownItems.Add(CreateHelpLink("Hardware and wiring", "HARDWARE.md"));
+        helpMenu.DropDownItems.Add(CreateHelpLink("Four-lane commissioning checklist", "docs/COMMISSIONING_CHECKLIST.md"));
+        var reportBug = new ToolStripMenuItem("Report a beta bug");
+        reportBug.Click += (_, _) => RunHelpAction(() =>
+            Process.Start(new ProcessStartInfo("https://github.com/tekrantz57/Drag/issues/new/choose") { UseShellExecute = true }));
+        helpMenu.DropDownItems.Add(reportBug);
+        helpMenu.DropDownItems.Add(new ToolStripSeparator());
+        var copyVersion = new ToolStripMenuItem("Copy Version Information");
+        copyVersion.Click += (_, _) => RunHelpAction(() => Clipboard.SetText(GetVersionInformation()));
+        helpMenu.DropDownItems.Add(copyVersion);
+        var about = new ToolStripMenuItem("About Drag");
+        about.Click += (_, _) => MessageBox.Show(this,
+            GetVersionInformation() + "\n\nFree, open-source software. MIT License.\nExperimental beta; physical track validation remains pending.",
+            "About Drag", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        helpMenu.DropDownItems.Add(about);
+        menuStrip.Items.AddRange([fileMenu, configureMenu, diagnosticsMenu, testMenu, helpMenu]);
         return menuStrip;
+    }
+
+    private ToolStripMenuItem CreateHelpLink(string text, string document)
+    {
+        var item = new ToolStripMenuItem(text);
+        item.Click += (_, _) => RunHelpAction(() => Process.Start(new ProcessStartInfo(
+            $"https://github.com/tekrantz57/Drag/blob/master/{document}")
+        { UseShellExecute = true }));
+        return item;
+    }
+
+    private string GetVersionInformation()
+    {
+        var identity = client.CurrentControllerIdentity;
+        var controller = identity is null ? "Not identified" :
+            $"{identity.Product} {identity.FirmwareVersion}, protocol {identity.ProtocolVersion}, {identity.Mcu}";
+        return $"Drag {BuildIdentity.Current}\n" +
+            $"OS: {RuntimeInformation.OSDescription}\n" +
+            $"Architecture: OS {RuntimeInformation.OSArchitecture}, app {RuntimeInformation.ProcessArchitecture}\n" +
+            $"Runtime: {RuntimeInformation.FrameworkDescription}\n" +
+            $"Demo session: {(demoMode ? "Yes" : "No")}\n" +
+            $"Controller connected: {(client.IsConnected ? "Yes" : "No")}\nController: {controller}";
+    }
+
+    private void RunHelpAction(Action action)
+    {
+        try { action(); }
+        catch (Exception exception) when (exception is InvalidOperationException or
+            System.ComponentModel.Win32Exception or ExternalException)
+        {
+            MessageBox.Show(this, exception.Message, "Help Action Failed",
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 
     private async Task UpdateControllerFirmwareAsync()

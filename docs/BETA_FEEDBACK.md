@@ -25,5 +25,5 @@ Unclassified results are `Unknown`; no source is inferred from a tournament name
 
 Demo and hardware operation still share one database. A controller source label
 identifies where results came from; it does not certify physical timing accuracy.
-The published v0.10.0-beta.1 package predates these source labels. They will be
-included in the next packaged beta, not retroactively added to existing exports.
+The v0.10.0-beta.1 package predates these source labels. They are included in
+v0.10.0-beta.2; existing exported files are not retroactively changed.

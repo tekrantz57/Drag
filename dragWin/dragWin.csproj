@@ -7,12 +7,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>DragWin</RootNamespace>
-    <Version>0.10.0-beta.1</Version>
+    <Version>0.10.0-beta.2</Version>
     <AssemblyVersion>0.10.0.0</AssemblyVersion>
     <FileVersion>0.10.0.0</FileVersion>
-    <InformationalVersion>0.10.0-beta.1</InformationalVersion>
+    <InformationalVersion>0.10.0-beta.2</InformationalVersion>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
-    <DisplayVersion>v0.10.0-beta.1</DisplayVersion>
+    <DisplayVersion>v0.10.0-beta.2</DisplayVersion>
     <!-- SQLite 7 lists Alpine RIDs that are irrelevant to this Windows-only app. -->
     <NoWarn>$(NoWarn);NETSDK1206</NoWarn>
   </PropertyGroup>

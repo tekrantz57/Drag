@@ -137,6 +137,15 @@ internal static class RegressionTests
         using (var main = new MainForm(demoMode: true, repository: repository, settings: new AppSettings()))
         {
             _ = main.Handle;
+            var help = main.MainMenuStrip!.Items.OfType<ToolStripMenuItem>().Single(item => item.Text == "Help");
+            Check(help.DropDownItems.OfType<ToolStripMenuItem>().Any(item => item.Text == "Copy Version Information"),
+                "Help menu omitted version copying.");
+            Check(help.DropDownItems.OfType<ToolStripMenuItem>().Count() == 6, "Help menu omitted a help action.");
+            var version = (string)Invoke(main, "GetVersionInformation")!;
+            Check(version.Contains(BuildIdentity.Current) && version.Contains("Demo session: Yes") &&
+                version.Contains("Controller connected: No") && version.Contains("Architecture:"),
+                "Copyable version information omitted diagnostic context.");
+            Check(!version.Contains(repository.DatabasePath), "Version information exposed a local database path.");
             Invoke(main, "TryAutoConnect");
             Invoke(main, "ToggleConnection");
             Check(!((DragSerialClient)Field(main, "client")).IsConnected, "Demo startup opened a serial port.");
@@ -193,6 +202,28 @@ internal static class RegressionTests
         Check(savedReport.HasSimulatedResults, "Demo report did not identify simulated results.");
         Check(File.ReadAllText(paths.Html).Contains("SIMULATED RESULTS INCLUDED"),
             "Demo HTML omitted its simulation warning.");
+        var html = File.ReadAllText(paths.Html);
+        Check(html.Contains("@page { size: landscape;") && html.Contains("display: table-header-group") &&
+              html.Contains("table-layout: fixed") && html.Contains("page-break-inside: avoid"),
+            "Report omitted the landscape print layout or repeated headings.");
+        var reportTestOutput = Environment.GetEnvironmentVariable("DRAG_REPORT_TEST_OUTPUT");
+        if (!string.IsNullOrWhiteSpace(reportTestOutput))
+        {
+            Directory.CreateDirectory(reportTestOutput);
+            TournamentReportWriter.WriteFile(report, Path.Combine(reportTestOutput, "demo-report.html"));
+            var stressRows = Enumerable.Range(1, 120).Select(index => report.Rows[0] with
+            {
+                RoundNumber = 1,
+                HeatNumber = 1,
+                LaneNumber = (index - 1) % 4 + 1,
+                RacerName = "Long Racer Name For Print Verification",
+                CarName = "A Very Long Car Name With Several Words",
+                ElapsedMicroseconds = 12345678,
+                Source = ResultSource.Simulated
+            }).ToArray();
+            TournamentReportWriter.WriteFile(report with { Rows = stressRows },
+                Path.Combine(reportTestOutput, "print-stress-report.html"));
+        }
         Check(File.ReadAllText(paths.Csv!).Contains("ResultSource") &&
               File.ReadAllText(paths.Csv!).Contains(",Simulated"), "Demo CSV omitted result sources.");
         using var json = System.Text.Json.JsonDocument.Parse(File.ReadAllText(paths.Json!));

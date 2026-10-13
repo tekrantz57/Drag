@@ -1,7 +1,7 @@
 # Public Beta Verification
 
-Checked October 11, 2026. This records the actual published package separately
-from the newer, not-yet-packaged working-tree changes.
+Beta.1 checked October 11, 2026; beta.2 source checks completed October 13, 2026.
+Package startup checks on the development PC are not fresh-PC or ARM64 runtime tests.
 
 ## Published v0.10.0-beta.1
 
@@ -19,7 +19,7 @@ from the newer, not-yet-packaged working-tree changes.
   passed for that exact commit: Windows build, protocol/regression tests,
   formatting, Mega compilation, firmware result-delivery tests, and speech tests.
 
-## New Beta Preparation Changes
+## Beta.2 Preparation And Release Checks
 
 - GitHub Issues enabled for focused beta bug reports; the repository includes
   a dedicated beta bug-report form.
@@ -30,7 +30,14 @@ from the newer, not-yet-packaged working-tree changes.
 - Local Release build and protocol/regression tests passed; formatting passed.
 - All three local speech-helper tests passed using Python 3.
 - Venue mounting documentation updated to the no-routing, extended-lead prototype.
-- These changes have not replaced or modified either published binary ZIP.
+- Help menu tests cover documentation actions and non-private version information.
+- The commissioning checklist is included in beta.2 packages.
+- Modern Edge PDF rendering confirms landscape Letter output, no table overflow,
+  and repeated headings on every page of a nine-page, 120-row long-name test.
+  Rendered first, continuation, and final pages were visually inspected.
+- Beta.2 packaging uses a clean tagged commit, with checksum/layout/architecture
+  verification for both ZIPs and actual x64 demo-launch testing before publication.
+  Beta.1 downloads remain unchanged.
 
 ## Still Requires A Different Environment
 
@@ -38,7 +45,7 @@ from the newer, not-yet-packaged working-tree changes.
   Startup here does not establish how SmartScreen behaves on another machine.
   Existing instructions warn that the app is unsigned and say not to disable
   Windows security protections.
-- Runtime testing of this exact ARM64 ZIP on ARM64 Windows/Wine.
+- Runtime testing of each exact ARM64 ZIP on ARM64 Windows/Wine.
 - Moving-car and simultaneous four-lane hardware validation.
 
 ## Repeat The Package Check

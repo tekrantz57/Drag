@@ -113,3 +113,13 @@ rejects personal data and debugging files, and creates ZIPs plus SHA-256
 checksums under a fresh `artifacts/release` directory. It does not upload,
 create tags, or edit the source. Attach only the ZIPs and checksum file to a
 GitHub prerelease, using the matching release-notes document.
+
+Validate each package with `tools/Test-ReleasePackage.ps1`, passing its ZIP and
+the generated checksum file. Add `-LaunchDemo` for x64 startup testing on an x64
+Windows host. Current packages must also contain the beta feedback notes and
+commissioning worksheet. Inspect ARM64 packages here, then runtime-test them on
+an ARM64 machine before claiming that platform has been validated.
+
+To retain non-private report fixtures for print QA, set `DRAG_REPORT_TEST_OUTPUT`
+to a local output folder before running the protocol tests. The test runner
+writes a normal demo report and a 120-row long-name print stress report there.
