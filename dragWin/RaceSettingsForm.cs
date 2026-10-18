@@ -7,6 +7,7 @@ public sealed class RaceSettingsForm : Form
     private readonly ComboBox laneCountSelector = new() { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
     private readonly ComboBox treeSelector = new() { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
     private readonly ComboBox stagingModeSelector = new() { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
+    private readonly ComboBox treeStartSelector = new() { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
     private readonly NumericUpDown stagedDelayInput = new()
     {
         DecimalPlaces = 3,
@@ -83,7 +84,8 @@ public sealed class RaceSettingsForm : Form
         SpeechBackendMode speechBackend,
         bool exportTournamentJson,
         bool exportTournamentCsv,
-        bool controllerConnected)
+        bool controllerConnected,
+        bool manualTreeStart = false)
     {
         Text = "Race and Track Settings";
         StartPosition = FormStartPosition.CenterParent;
@@ -91,7 +93,7 @@ public sealed class RaceSettingsForm : Form
         MinimizeBox = false;
         MaximizeBox = false;
         ShowInTaskbar = false;
-        ClientSize = new Size(540, 460);
+        ClientSize = new Size(540, 490);
 
         modeSelector.Items.AddRange(["HEADS_UP", "BRACKET"]);
         laneCountSelector.Items.AddRange(["2", "4"]);
@@ -101,6 +103,8 @@ public sealed class RaceSettingsForm : Form
         laneCountSelector.SelectedItem = laneCount.ToString();
         treeSelector.SelectedItem = treeMode;
         stagingModeSelector.SelectedIndex = stagingMode == "IN_ORDER" ? 1 : 0;
+        treeStartSelector.Items.AddRange(["Automatic", "Starter Button"]);
+        treeStartSelector.SelectedIndex = manualTreeStart ? 1 : 0;
         stagedDelayInput.Value = Math.Clamp(stagedDelaySeconds, stagedDelayInput.Minimum, stagedDelayInput.Maximum);
         trackLengthInput.Value = Math.Clamp(trackLengthInches, trackLengthInput.Minimum, trackLengthInput.Maximum);
         speedTrapLengthInput.Value = Math.Clamp(speedTrapLengthInches, speedTrapLengthInput.Minimum, speedTrapLengthInput.Maximum);
@@ -190,6 +194,7 @@ public sealed class RaceSettingsForm : Form
     public string TreeMode => (string)treeSelector.SelectedItem!;
     public string StagingMode => stagingModeSelector.SelectedIndex == 1 ? "IN_ORDER" : "BOTH_BLOCKED";
     public decimal StagedDelaySeconds => stagedDelayInput.Value;
+    public bool ManualTreeStart => treeStartSelector.SelectedIndex == 1;
     public decimal TrackLengthInches => trackLengthInput.Value;
     public decimal SpeedTrapLengthInches => speedTrapLengthInput.Value;
     public IReadOnlyList<decimal> DialSeconds => dialInputs.Select(input => input.Value).ToArray();
@@ -214,7 +219,7 @@ public sealed class RaceSettingsForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 3,
-            RowCount = 9,
+            RowCount = 10,
             Padding = new Padding(14)
         };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
@@ -225,6 +230,7 @@ public sealed class RaceSettingsForm : Form
         AddSettingRow(layout, 2, "Tree", treeSelector);
         AddSettingRow(layout, 3, "Staging detection", stagingModeSelector);
         AddSettingRow(layout, 4, "Staged delay", stagedDelayInput, "seconds");
+        AddSettingRow(layout, 5, "Tree start", treeStartSelector);
 
         for (var lane = 0; lane < PhysicalLaneCount; lane++)
         {
@@ -238,7 +244,7 @@ public sealed class RaceSettingsForm : Form
                 Dock = DockStyle.Fill
             };
             dialInputs[lane] = input;
-            AddSettingRow(layout, lane + 5, $"Lane {lane + 1} dial", input, "seconds");
+            AddSettingRow(layout, lane + 6, $"Lane {lane + 1} dial", input, "seconds");
         }
         tab.Controls.Add(layout);
         return tab;

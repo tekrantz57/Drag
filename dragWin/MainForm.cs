@@ -167,6 +167,7 @@ public sealed class MainForm : Form
         ForeColor = Color.White,
         FlatStyle = FlatStyle.Flat
     };
+    private readonly StarterButtonSession practiceStarter = new();
     private readonly System.Windows.Forms.Timer heartbeatTimer = new()
     {
         Interval = 1000
@@ -289,6 +290,7 @@ public sealed class MainForm : Form
             PostToUi(() => AppendLog($"! {error}"));
         heartbeatTimer.Tick += (_, _) =>
         {
+            UpdatePracticeStartButton();
             UpdateConnectionLabel();
             CheckAutoConnectAttempt();
         };
@@ -1161,6 +1163,8 @@ public sealed class MainForm : Form
 
     private void RunSelectedTournament()
     {
+        practiceStarter.Cancel();
+        UpdatePracticeStartButton();
         if (tournamentSelector.SelectedItem is not Tournament tournament)
         {
             MessageBox.Show(this, "Create or select a tournament first.", Text);
@@ -1179,7 +1183,7 @@ public sealed class MainForm : Form
             new TournamentReportExportOptions(
                 persistedSettings.ExportTournamentJson,
                 persistedSettings.ExportTournamentCsv),
-            demoMode: demoMode).ShowDialog(this);
+            demoMode: demoMode, manualTreeStart: persistedSettings.ManualTreeStart).ShowDialog(this);
         RefreshTournaments();
     }
 
@@ -1243,9 +1247,13 @@ public sealed class MainForm : Form
                SendCommandBatch(commands);
     }
 
-    private bool TryBuildRaceSettingsCommands(out List<string[]> commands)
+    private bool TryBuildRaceSettingsCommands(out List<string[]> commands, bool forArming = false)
     {
         commands = [];
+        if (persistedSettings.ManualTreeStart && !StarterButtonSession.Supported(client.CurrentControllerIdentity))
+            return false;
+        if (!forArming && StarterButtonSession.Supported(client.CurrentControllerIdentity))
+            commands.Add(["SET", "START_MODE", persistedSettings.ManualTreeStart ? "MANUAL" : "AUTO"]);
         if (modeSelector.SelectedItem is not string mode ||
             treeModeSelector.SelectedItem is not string treeMode)
         {
@@ -1305,6 +1313,12 @@ public sealed class MainForm : Form
             return;
         }
 
+        if (persistedSettings.ManualTreeStart && !StarterButtonSession.Supported(client.CurrentControllerIdentity))
+        {
+            MessageBox.Show(this, "Starter Button mode requires DragMC 0.6.6 or newer (protocol 9). Update the controller first.", Text);
+            return;
+        }
+
         var laneCount = SelectedLaneCount();
         var selectedLanes = SelectedPracticeLanes(laneCount).ToArray();
         if (selectedLanes.Length == 0)
@@ -1313,16 +1327,20 @@ public sealed class MainForm : Form
             return;
         }
 
-        if (!TryBuildRaceSettingsCommands(out var commands))
+        if (!TryBuildRaceSettingsCommands(out var commands, forArming: true))
         {
             return;
         }
         commands.Add(["SET", "HEAT_LANES", string.Join(',', selectedLanes)]);
-        commands.Add(["RESET"]);
+        commands.Add(StarterButtonSession.Supported(client.CurrentControllerIdentity)
+            ? ["ARM", persistedSettings.ManualTreeStart ? "MANUAL" : "AUTO"] : ["RESET"]);
+        practiceStarter.Arm(persistedSettings.ManualTreeStart);
         if (!SendCommandBatch(commands))
         {
+            practiceStarter.Cancel();
             return;
         }
+        UpdatePracticeStartButton();
         SaveCurrentSettings();
         BeginPracticePassResults(selectedLanes);
         AppendLog($"Practice setup sent for lane(s): {string.Join(", ", selectedLanes)}.");
@@ -1330,6 +1348,8 @@ public sealed class MainForm : Form
 
     private void DemoPracticeRun()
     {
+        practiceStarter.Cancel();
+        UpdatePracticeStartButton();
         var laneCount = SelectedLaneCount();
         var selectedLanes = SelectedPracticeLanes(laneCount).ToArray();
         if (selectedLanes.Length == 0)
@@ -1371,6 +1391,7 @@ public sealed class MainForm : Form
                 persistedSettings.SpeechVoiceName,
                 persistedSettings.SpeechBackend);
             passResultsForm.FormClosed += (_, _) => passResultsForm = null;
+            passResultsForm.StartTreeRequested += (_, _) => StartPracticeTree();
             passResultsForm.Show(this);
         }
         else
@@ -1383,6 +1404,7 @@ public sealed class MainForm : Form
             persistedSettings.SpeechVoiceName,
             persistedSettings.SpeechBackend);
         passResultsForm.BeginPass(lanes, persistedSettings.IntervalTimerLanes, simulated);
+        UpdatePracticeStartButton();
         return passResultsForm;
     }
 
@@ -1506,7 +1528,8 @@ public sealed class MainForm : Form
             persistedSettings.SpeechBackend,
             persistedSettings.ExportTournamentJson,
             persistedSettings.ExportTournamentCsv,
-            client.IsConnected);
+            client.IsConnected,
+            persistedSettings.ManualTreeStart);
         if (dialog.ShowDialog(this) != DialogResult.OK)
         {
             return;
@@ -1520,6 +1543,8 @@ public sealed class MainForm : Form
         trackLengthInput.Value = dialog.TrackLengthInches;
         speedTrapLengthInput.Value = dialog.SpeedTrapLengthInches;
         persistedSettings.ExportTournamentJson = dialog.ExportTournamentJson;
+        persistedSettings.ManualTreeStart = dialog.ManualTreeStart;
+        practiceStarter.Cancel();
         persistedSettings.ExportTournamentCsv = dialog.ExportTournamentCsv;
         persistedSettings.IntervalTimerLanes = dialog.IntervalTimerLanes.ToArray();
         persistedSettings.VoiceAnnouncementsEnabled = dialog.VoiceAnnouncementsEnabled;
@@ -1545,6 +1570,11 @@ public sealed class MainForm : Form
             $"{dialog.StagedDelaySeconds:0.000}s staged delay.");
         if (client.IsConnected)
         {
+            if (dialog.ManualTreeStart && !StarterButtonSession.Supported(client.CurrentControllerIdentity))
+            {
+                MessageBox.Show(this, "Starter Button mode requires DragMC 0.6.6 or newer (protocol 9). Update the controller before arming a run.", Text);
+                return;
+            }
             ApplyRaceSettings();
         }
     }
@@ -1565,6 +1595,8 @@ public sealed class MainForm : Form
 
     private void HandleMessage(ProtocolMessage message)
     {
+        practiceStarter.Observe(message);
+        UpdatePracticeStartButton();
         MarkControllerReady();
         if (message.Type == "HEARTBEAT")
         {
@@ -1862,6 +1894,7 @@ public sealed class MainForm : Form
         connectionRequested = connected;
         if (!connected)
         {
+            practiceStarter.Cancel();
             controllerReady = false;
             savedSettingsAppliedToController = false;
         }
@@ -1883,6 +1916,7 @@ public sealed class MainForm : Form
         UpdateDialInputState();
         UpdateConnectionLabel();
         connectionLabel.Refresh();
+        UpdatePracticeStartButton();
     }
 
     private void MarkControllerReady()
@@ -1983,6 +2017,7 @@ public sealed class MainForm : Form
             LaneCount = SelectedLaneCount(),
             TreeMode = treeModeSelector.SelectedItem as string ?? "FULL",
             StagingMode = stagingModeSelector.SelectedItem as string ?? "BOTH_BLOCKED",
+            ManualTreeStart = persistedSettings.ManualTreeStart,
             StagedDelaySeconds = stagedDelayInput.Value,
             TrackLengthInches = trackLengthInput.Value,
             SpeedTrapLengthInches = speedTrapLengthInput.Value,
@@ -2090,7 +2125,33 @@ public sealed class MainForm : Form
             $"{SelectedLaneCount()} lanes  |  {mode.Replace('_', ' ')}  |  " +
             $"{tree} Tree  |  " +
             $"{StagingModeLabel(stagingModeSelector.SelectedItem as string)}  |  " +
-            $"{stagedDelayInput.Value:0.000}s delay";
+            $"{stagedDelayInput.Value:0.000}s delay  |  " +
+            (persistedSettings.ManualTreeStart ? "Starter Button" : "Automatic start");
+        UpdatePracticeStartButton();
+    }
+
+    private void UpdatePracticeStartButton()
+    {
+        if (!client.IsConnected) practiceStarter.Cancel();
+        if (passResultsForm is { IsDisposed: false })
+            passResultsForm.UpdateTreeStartState(persistedSettings.ManualTreeStart && !demoMode, CanStartPracticeTree());
+    }
+
+    private bool CanStartPracticeTree()
+    {
+        var fresh = client.LastHeartbeatReceivedAt is { } at && DateTimeOffset.Now - at <= TimeSpan.FromSeconds(3);
+        return persistedSettings.ManualTreeStart && !demoMode && fresh &&
+            StarterButtonSession.Supported(client.CurrentControllerIdentity) &&
+            practiceStarter.CanStart(client.IsConnected, client.CurrentControllerIdentity?.ProtocolVersion);
+    }
+
+    private void StartPracticeTree()
+    {
+        UpdatePracticeStartButton();
+        if (!CanStartPracticeTree()) return;
+        var command = practiceStarter.TakeCommand(client.IsConnected, client.CurrentControllerIdentity?.ProtocolVersion);
+        if (command is not null && !SendCommandBatch([command])) practiceStarter.SendFailed();
+        UpdatePracticeStartButton();
     }
 
     private static string StagingModeLabel(string? stagingMode) =>

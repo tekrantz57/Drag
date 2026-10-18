@@ -18,6 +18,8 @@ tournaments, reports, diagnostics, backups, and controller firmware updates.
 
 - Heads-up and bracket racing for two or four physical lanes.
 - Full and Pro Tree timing with configurable staging behavior and staged delay.
+- Current source adds optional on-screen Starter Button mode (DragMC 0.6.6 /
+  protocol 9 required); this is not yet included in beta.2 downloads.
 - Practice passes, pass-result history, tournament setup, ordered lane choice,
   byes, advancement, and final standings.
 - Four required beam sensors per lane plus two optional interval timers.

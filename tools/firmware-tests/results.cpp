@@ -9,6 +9,9 @@ void resetTest(RaceMode mode) {
   serialQueueCount = serialQueueHead = serialQueueTail = serialHeadOffset = 0;
   droppedSerialMessageCount = 0;
   raceMode = mode;
+  starterButtonMode = startAuthorized = false;
+  lightTestEnabled = false;
+  stagedDelayMs = DEFAULT_STAGED_DELAY_MS;
   activeLaneCount = 4;
   heatLaneMask = splitLaneMask = 0x0F;
   enterState(TreeState::WaitingForAllLanes, 0);
@@ -34,7 +37,90 @@ void drain() {
   assert(false && "Result delivery did not finish");
 }
 
+void command(const std::string& payload) {
+  char frame[128];
+  snprintf(frame, sizeof(frame), "%s:%02X", payload.c_str(), calculateChecksum(payload.c_str()));
+  processCommand(frame);
+  drain();
+}
+
+void stage(bool blocked) {
+  for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
+    for (uint8_t sensor = 0; sensor < SENSORS_PER_LANE; ++sensor) {
+      testPinLevels[SENSOR_PINS[lane][sensor]] =
+          blocked && (sensor == PreStageSensor || sensor == StageSensor) ? HIGH : LOW;
+      sensors[lane][sensor] = DebouncedBeamSensor{};
+      sensors[lane][sensor].begin(SENSOR_PINS[lane][sensor]);
+    }
+  }
+}
+
+void starterTests() {
+  for (auto mode : {RaceMode::HeadsUp, RaceMode::Bracket}) {
+    for (auto tree : {TreeMode::Full, TreeMode::Pro}) {
+      resetTest(mode);
+      treeMode = tree;
+      heatLaneMask = 1;
+      stage(false);
+      command("ARM:MANUAL");
+      command("START_TREE:1");
+      assert(!startAuthorized && treeState == TreeState::WaitingForAllLanes);
+      stage(true);
+      updateTree(0);
+      const auto token = stagingToken;
+      testTimeMs = 10000;
+      updateTree(testTimeMs);
+      assert(treeState == TreeState::StagingHold && !startAuthorized);
+      command("START_TREE:" + std::to_string(token));
+      assert(startAuthorized);
+      const auto authorizedAt = stateStartedAtMs;
+      testTimeMs += 10;
+      command("START_TREE:" + std::to_string(token));
+      assert(stateStartedAtMs == authorizedAt);
+      updateTree(authorizedAt + stagedDelayMs - 1);
+      assert(treeState == TreeState::StagingHold);
+      updateTree(authorizedAt + stagedDelayMs);
+      assert(treeState == TreeState::RaceActive);
+
+      // Arm is atomic, even when replacing an already active automatic race.
+      starterButtonMode = false;
+      command("ARM:MANUAL");
+      assert(starterButtonMode && treeState == TreeState::WaitingForAllLanes && !startAuthorized);
+      updateTree(testTimeMs);
+      command("START_TREE:" + std::to_string(stagingToken));
+      assert(startAuthorized);
+      stage(false);
+      updateTree(testTimeMs);
+      assert(treeState == TreeState::WaitingForAllLanes && !startAuthorized);
+      stage(true);
+      updateTree(testTimeMs);
+      const auto restagedToken = stagingToken;
+      assert(restagedToken != token);
+      command("START_TREE:" + std::to_string(token));
+      assert(!startAuthorized);
+      lightTestEnabled = true;
+      command("START_TREE:" + std::to_string(restagedToken));
+      assert(!startAuthorized);
+      lightTestEnabled = false;
+      stagedDelayMs = 0;
+      command("START_TREE:" + std::to_string(restagedToken));
+      updateTree(testTimeMs);
+      assert(treeState == TreeState::RaceActive);
+
+      command("ARM:AUTO");
+      assert(!starterButtonMode);
+      updateTree(testTimeMs);
+      updateTree(testTimeMs);
+      assert(treeState == TreeState::RaceActive);
+      command("START_TREE:" + std::to_string(stagingToken));
+      assert(!startAuthorized);
+    }
+  }
+  std::cout << "Firmware starter-button tests passed.\n";
+}
+
 int main() {
+  starterTests();
   for (RaceMode mode : {RaceMode::HeadsUp, RaceMode::Bracket}) {
     resetTest(mode);
     for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {

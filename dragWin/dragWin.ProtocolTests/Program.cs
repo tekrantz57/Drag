@@ -67,6 +67,7 @@ try
         LaneCount = 2,
         TreeMode = "PRO",
         StagingMode = "IN_ORDER",
+        ManualTreeStart = true,
         StagedDelaySeconds = 0.750M,
         TrackLengthInches = 1320M,
         SpeedTrapLengthInches = 66M,
@@ -83,6 +84,7 @@ try
     AssertEqual("HEADS_UP", loadedSettings.RaceMode);
     AssertEqual(2, loadedSettings.LaneCount);
     AssertEqual("IN_ORDER", loadedSettings.StagingMode);
+    AssertEqual(true, loadedSettings.ManualTreeStart);
     AssertEqual(0.750M, loadedSettings.StagedDelaySeconds);
     AssertEqual(7.4M, loadedSettings.DialSeconds[3]);
     AssertEqual(4, loadedSettings.PracticeLanes[1]);
@@ -264,9 +266,9 @@ Assert(!dueLightTestIdentity.IsExpectedDragMc("0.6.4"),
     "The Mega firmware updater must reject the Due diagnostic identity.");
 
 var firmwarePackagePath = FindRepositoryFile(
-    Path.Combine("dragMC", "dist", "DragMC-mega-0.6.5.dragfw"));
+    Path.Combine("dragMC", "dist", "DragMC-mega-0.6.6.dragfw"));
 var firmwarePackage = ControllerFirmwarePackage.Load(firmwarePackagePath);
-AssertEqual("0.6.5", firmwarePackage.Manifest.FirmwareVersion);
+AssertEqual("0.6.6", firmwarePackage.Manifest.FirmwareVersion);
 AssertEqual("ARDUINO_MEGA_2560", firmwarePackage.Manifest.BoardProfile);
 AssertEqual("atmega2560", firmwarePackage.Manifest.Mcu);
 var packageHash = Convert.ToHexString(SHA256.HashData(firmwarePackage.ImageBytes));

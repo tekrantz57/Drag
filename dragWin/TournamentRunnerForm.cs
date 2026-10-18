@@ -20,6 +20,9 @@ public sealed class TournamentRunnerForm : Form
     private readonly DragSerialClient client;
     private readonly int stagedDelayMilliseconds;
     private readonly string stagingMode;
+    private readonly bool manualTreeStart;
+    private readonly StarterButtonSession starter = new();
+    private readonly Button startTreeButton = new() { Text = "Start Tree", AutoSize = true, Enabled = false, Visible = false, Padding = new Padding(12, 4, 12, 4) };
     private readonly HashSet<int> splitSensorLanes;
     private readonly bool voiceAnnouncementsEnabled;
     private readonly string speechVoiceName;
@@ -138,9 +141,11 @@ public sealed class TournamentRunnerForm : Form
         string speechVoiceName,
         SpeechBackendMode speechBackend,
         TournamentReportExportOptions reportExportOptions,
-        bool demoMode = false)
+        bool demoMode = false,
+        bool manualTreeStart = false)
     {
         this.demoMode = demoMode;
+        this.manualTreeStart = manualTreeStart;
         this.tournament = tournament;
         this.repository = repository;
         this.client = client;
@@ -167,6 +172,7 @@ public sealed class TournamentRunnerForm : Form
         confirmLaneChoiceButton.Padding = new Padding(12, 4, 12, 4);
         UiStyles.ConfigurePrimaryButton(confirmLaneChoiceButton, UiStyles.BlueAction);
         UiStyles.ConfigurePrimaryButton(sendHeatButton, UiStyles.BlueAction);
+        UiStyles.ConfigurePrimaryButton(startTreeButton, UiStyles.GreenAction);
         UiStyles.ConfigurePrimaryButton(confirmButton, UiStyles.GreenAction);
 
         lanesGrid.BackgroundColor = SystemColors.Window;
@@ -219,6 +225,7 @@ public sealed class TournamentRunnerForm : Form
         lanesGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Status", HeaderText = "Status", ReadOnly = true, FillWeight = 100 });
 
         sendHeatButton.Click += (_, _) => RunRunnerButtonAction(sendHeatButton, demoMode ? DemoHeat : SendHeat);
+        startTreeButton.Click += (_, _) => RunRunnerButtonAction(startTreeButton, StartTree);
         confirmLaneChoiceButton.Click += (_, _) => RunRunnerButtonAction(confirmLaneChoiceButton, ConfirmLaneChoice);
         confirmButton.Click += (_, _) => ConfirmHeat();
         rerunButton.Click += (_, _) => PrepareRerun();
@@ -274,7 +281,7 @@ public sealed class TournamentRunnerForm : Form
             WrapContents = false,
             FlowDirection = FlowDirection.RightToLeft
         };
-        primaryButtons.Controls.AddRange([confirmButton, sendHeatButton, confirmLaneChoiceButton]);
+        primaryButtons.Controls.AddRange([confirmButton, startTreeButton, sendHeatButton, confirmLaneChoiceButton]);
         buttons.Controls.Add(secondaryButtons, 0, 0);
         buttons.Controls.Add(primaryButtons, 1, 0);
 
@@ -346,6 +353,7 @@ public sealed class TournamentRunnerForm : Form
 
     private void LoadHeat()
     {
+        starter.Cancel();
         heatArmed = false;
         heatConfirmationSaved = false;
         heat = NormalizeFinalHeat(round.Heats[heatIndex]);
@@ -486,7 +494,12 @@ public sealed class TournamentRunnerForm : Form
         var canStartHeat = laneChoicesComplete && !confirmingHeat && !runnerActionRunning &&
             phase == RunnerPhase.ReadyToStage;
         sendHeatButton.Enabled = canStartHeat;
-        sendHeatButton.Visible = phase is RunnerPhase.ReadyToStage or RunnerPhase.WaitingForStage or RunnerPhase.Staged or RunnerPhase.Racing;
+        startTreeButton.Visible = manualTreeStart && !demoMode && phase is RunnerPhase.WaitingForStage or RunnerPhase.Staged;
+        var fresh = client.LastHeartbeatReceivedAt is { } at && DateTimeOffset.Now - at <= TimeSpan.FromSeconds(3);
+        startTreeButton.Enabled = startTreeButton.Visible && fresh && !runnerActionRunning && heatArmed &&
+            StarterButtonSession.Supported(client.CurrentControllerIdentity) &&
+            starter.CanStart(client.IsConnected, client.CurrentControllerIdentity?.ProtocolVersion);
+        sendHeatButton.Visible = !startTreeButton.Visible && phase is RunnerPhase.ReadyToStage or RunnerPhase.WaitingForStage or RunnerPhase.Staged or RunnerPhase.Racing;
         confirmLaneChoiceButton.Visible = phase == RunnerPhase.ChoosingLanes;
         confirmButton.Visible = phase == RunnerPhase.ResultsReady;
         rerunButton.Visible = phase == RunnerPhase.ResultsReady;
@@ -519,6 +532,8 @@ public sealed class TournamentRunnerForm : Form
 
     private void UpdateConnectionStatus()
     {
+        if (!client.IsConnected) starter.Cancel();
+        UpdateHeatActionButtons();
         if (demoMode)
         {
             connectionLabel.Text = "Demo - simulated results";
@@ -624,8 +639,23 @@ public sealed class TournamentRunnerForm : Form
         }
     }
 
+    private bool StartTree()
+    {
+        var command = starter.TakeCommand(client.IsConnected, client.CurrentControllerIdentity?.ProtocolVersion);
+        if (command is null || !heatArmed || !manualTreeStart || demoMode) return false;
+        try { client.SendBatch([command]); }
+        catch { starter.SendFailed(); throw; }
+        AddTimeline("Starter requested the Tree start.");
+        return true;
+    }
+
     private bool SendHeat()
     {
+        if (manualTreeStart && !StarterButtonSession.Supported(client.CurrentControllerIdentity))
+        {
+            MessageBox.Show(this, "Starter Button mode requires DragMC 0.6.6 or newer (protocol 9). Update the controller first.", Text);
+            return false;
+        }
         if (!client.IsConnected)
         {
             MessageBox.Show(this, "Connect to the controller first.", Text);
@@ -655,7 +685,9 @@ public sealed class TournamentRunnerForm : Form
                 "SET", "DIAL", entry.LaneNumber.ToString(),
                 entry.DialMilliseconds.ToString()]);
         }
-        commands.Add(["RESET"]);
+        commands.Add(StarterButtonSession.Supported(client.CurrentControllerIdentity)
+            ? ["ARM", manualTreeStart ? "MANUAL" : "AUTO"] : ["RESET"]);
+        starter.Arm(manualTreeStart);
         currentHeatSimulated = false;
         client.SendBatch(commands);
         heatArmed = true;
@@ -669,6 +701,7 @@ public sealed class TournamentRunnerForm : Form
 
     private bool DemoHeat()
     {
+        starter.Cancel();
         if (phase != RunnerPhase.ReadyToStage)
         {
             MessageBox.Show(this, "The demo can only be generated while a heat is ready to stage.", Text);
@@ -800,8 +833,15 @@ public sealed class TournamentRunnerForm : Form
 
     private void ProcessMessage(ProtocolMessage message)
     {
+        starter.Observe(message);
+        UpdateHeatActionButtons();
         if (message.Type == "HEARTBEAT")
         {
+            if (heatArmed && manualTreeStart && starter.CanStart(client.IsConnected, client.CurrentControllerIdentity?.ProtocolVersion))
+            {
+                SetPhase(RunnerPhase.Staged);
+                phaseBanner.Text = "ALL LANES STAGED  |  Press Start Tree";
+            }
             return;
         }
 
@@ -884,7 +924,16 @@ public sealed class TournamentRunnerForm : Form
                     break;
                 case "ALL_LANES_STAGED":
                     SetPhase(RunnerPhase.Staged);
-                    AddTimeline($"All lanes staged. Tree starts after {stagedDelayMilliseconds} ms.");
+                    AddTimeline(manualTreeStart ? "All lanes staged. Waiting for the starter." :
+                        $"All lanes staged. Tree starts after {stagedDelayMilliseconds} ms.");
+                    break;
+                case "WAITING_FOR_START":
+                    SetPhase(RunnerPhase.Staged);
+                    phaseBanner.Text = "ALL LANES STAGED  |  Press Start Tree";
+                    break;
+                case "START_AUTHORIZED":
+                    phaseBanner.Text = "START AUTHORIZED  |  Staged delay running";
+                    AddTimeline($"Starter authorized the Tree. Delay: {stagedDelayMilliseconds} ms.");
                     break;
                 case "BRACKET_START":
                 case "HEADS_UP_START":

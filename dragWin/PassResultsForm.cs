@@ -26,6 +26,16 @@ public sealed class PassResultsForm : Form
         Text = "No passes armed"
     };
     private readonly Dictionary<int, PassLaneResult> currentResults = [];
+    private readonly Button startTreeButton = new()
+    {
+        Text = "Start Tree",
+        AutoSize = true,
+        MinimumSize = new Size(110, 32),
+        Visible = false,
+        Enabled = false
+    };
+    private bool currentPassSimulated;
+    public event EventHandler? StartTreeRequested;
     private bool voiceAnnouncementsEnabled;
     private string speechVoiceName;
     private SpeechBackendMode speechBackend;
@@ -66,6 +76,13 @@ public sealed class PassResultsForm : Form
         var closeButton = new Button { Text = "Close", AutoSize = true, MinimumSize = new Size(80, 28) };
         clearButton.Click += (_, _) => ClearResults();
         closeButton.Click += (_, _) => Close();
+        UiStyles.ConfigurePrimaryButton(startTreeButton, UiStyles.GreenAction);
+        startTreeButton.Click += (_, _) =>
+        {
+            if (!startTreeButton.Enabled) return;
+            startTreeButton.Enabled = false;
+            StartTreeRequested?.Invoke(this, EventArgs.Empty);
+        };
 
         var header = new TableLayoutPanel
         {
@@ -88,13 +105,15 @@ public sealed class PassResultsForm : Form
         {
             Dock = DockStyle.Fill,
             AutoSize = true,
-            ColumnCount = 2,
+            ColumnCount = 3,
             Padding = new Padding(0, 8, 0, 0)
         };
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         footer.Controls.Add(clearButton, 0, 0);
-        footer.Controls.Add(closeButton, 1, 0);
+        footer.Controls.Add(startTreeButton, 1, 0);
+        footer.Controls.Add(closeButton, 2, 0);
 
         var layout = new TableLayoutPanel
         {
@@ -128,6 +147,8 @@ public sealed class PassResultsForm : Form
         }
 
         MarkIncompleteRows();
+        currentPassSimulated = simulated;
+        startTreeButton.Enabled = false;
         currentResults.Clear();
         passResultAnnounced = false;
         passNumber++;
@@ -167,6 +188,12 @@ public sealed class PassResultsForm : Form
         voiceAnnouncementsEnabled = enabled;
         speechVoiceName = voiceName;
         speechBackend = backend;
+    }
+
+    public void UpdateTreeStartState(bool manualMode, bool canStart)
+    {
+        startTreeButton.Visible = manualMode && passNumber > 0 && !currentPassSimulated;
+        startTreeButton.Enabled = manualMode && passNumber > 0 && !currentPassSimulated && canStart;
     }
 
     public void ProcessMessages(IEnumerable<ProtocolMessage> messages)
@@ -408,6 +435,8 @@ public sealed class PassResultsForm : Form
         currentResults.Clear();
         resultsGrid.Rows.Clear();
         passNumber = 0;
+        startTreeButton.Visible = false;
+        startTreeButton.Enabled = false;
         sessionSummary.Text = "No passes armed";
     }
 

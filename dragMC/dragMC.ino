@@ -9,7 +9,7 @@ constexpr uint8_t LIGHTS_PER_LANE = 7;
 constexpr uint8_t SENSORS_PER_LANE = 6;
 constexpr char FIRMWARE_NAME[] = "DRAG_MC";
 constexpr char FIRMWARE_VERSION[] = DRAGMC_FIRMWARE_VERSION;
-constexpr uint8_t PROTOCOL_VERSION = 8;
+constexpr uint8_t PROTOCOL_VERSION = 9;
 
 enum LightIndex : uint8_t {
   PreStageLight,
@@ -214,6 +214,9 @@ RaceMode raceMode = RaceMode::HeadsUp;
 TreeMode treeMode = TreeMode::Full;
 StagingMode stagingMode = StagingMode::BothBlocked;
 unsigned long stagedDelayMs = DEFAULT_STAGED_DELAY_MS;
+bool starterButtonMode = false;
+bool startAuthorized = false;
+uint16_t stagingToken = 0;
 uint8_t activeLaneCount = MAX_LANE_COUNT;
 uint8_t heatLaneMask = 0x0F;
 uint8_t splitLaneMask = 0;
@@ -320,14 +323,14 @@ void sendHello() {
 }
 
 void sendHeartbeat(const unsigned long nowMs) {
-  char message[80];
-  snprintf(
+  char message[96];
+  snprintf_P(
       message,
       sizeof(message),
-      "HEARTBEAT:%lu:SEQ:%lu:STATE:%s",
+      PSTR("HEARTBEAT:%lu:SEQ:%lu:STATE:%s:START_TOKEN:%u"),
       nowMs,
       static_cast<unsigned long>(protocolSequence),
-      treeStateName());
+      treeStateName(), stagingToken);
   sendProtocolMessage(message);
 }
 
@@ -473,7 +476,8 @@ const char* treeStateName() {
     case TreeState::WaitingForAllLanes:
       return "WAITING_FOR_ALL_LANES";
     case TreeState::StagingHold:
-      return "ALL_LANES_STAGED";
+      return starterButtonMode ? (startAuthorized ? "START_DELAY" : "WAITING_FOR_START")
+                               : "ALL_LANES_STAGED";
     case TreeState::RaceActive:
       return "RACE_ACTIVE";
     case TreeState::ShowingResults:
@@ -512,6 +516,7 @@ void enterState(const TreeState newState, const unsigned long nowMs) {
 
   switch (newState) {
     case TreeState::WaitingForAllLanes:
+      startAuthorized = false;
       turnOffRaceLights();
       raceResultsPending = false;
       for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) resultFieldCursor[lane] = 0;
@@ -521,7 +526,14 @@ void enterState(const TreeState newState, const unsigned long nowMs) {
       break;
 
     case TreeState::StagingHold:
+      startAuthorized = false;
+      if (++stagingToken == 0) ++stagingToken;
       sendProtocolMessage("EVENT:TREE:ALL_LANES_STAGED");
+      if (starterButtonMode) {
+        char message[48];
+        snprintf_P(message, sizeof(message), PSTR("EVENT:TREE:WAITING_FOR_START:%u"), stagingToken);
+        sendProtocolMessage(message);
+      }
       break;
 
     case TreeState::RaceActive:
@@ -1028,6 +1040,10 @@ void sendStatus() {
   sendProtocolMessage(message);
 
   char splitLanes[10];
+  snprintf_P(message, sizeof(message),
+      PSTR("STATUS:START_MODE:%s:START_TOKEN:%u:AUTHORIZED:%u"),
+      starterButtonMode ? "MANUAL" : "AUTO", stagingToken, startAuthorized ? 1 : 0);
+  sendProtocolMessage(message);
   formatSplitLanes(splitLanes, sizeof(splitLanes));
   snprintf(message, sizeof(message), "STATUS:INTERVAL_LANES:%s", splitLanes);
   sendProtocolMessage(message);
@@ -1332,6 +1348,23 @@ void processSetCommand(char* line) {
     return;
   }
 
+  if (strcmp_P(setting, PSTR("START_MODE")) == 0 && value2 == nullptr) {
+    if (treeState == TreeState::RaceActive || treeState == TreeState::ShowingResults) {
+      sendFlashProtocolMessage(PSTR("ERROR:STATE:START_MODE"));
+      return;
+    }
+    if (strcmp_P(value1, PSTR("MANUAL")) == 0) starterButtonMode = true;
+    else if (strcmp_P(value1, PSTR("AUTO")) == 0) starterButtonMode = false;
+    else {
+      sendFlashProtocolMessage(PSTR("ERROR:VALUE:START_MODE"));
+      return;
+    }
+    enterState(TreeState::WaitingForAllLanes, millis());
+    sendFlashProtocolMessage(starterButtonMode ? PSTR("ACK:SET:START_MODE:MANUAL")
+                                               : PSTR("ACK:SET:START_MODE:AUTO"));
+    return;
+  }
+
   if (strcmp(setting, "STAGED_DELAY") == 0 && value2 == nullptr) {
     char* endPointer = nullptr;
     const unsigned long requestedDelay = strtoul(value1, &endPointer, 10);
@@ -1514,7 +1547,25 @@ void processCommand(char* line) {
     return;
   }
 
-  if (strcmp(line, "PING") == 0) {
+  if (strcmp_P(line, PSTR("ARM:MANUAL")) == 0 || strcmp_P(line, PSTR("ARM:AUTO")) == 0) {
+    starterButtonMode = line[4] == 'M';
+    stopLightTest(false);
+    enterState(TreeState::WaitingForAllLanes, millis());
+    sendFlashProtocolMessage(starterButtonMode ? PSTR("ACK:ARM:MANUAL") : PSTR("ACK:ARM:AUTO"));
+  } else if (strncmp_P(line, PSTR("START_TREE:"), 11) == 0) {
+    char* end = nullptr;
+    const unsigned long token = strtoul(line + 11, &end, 10);
+    if (!starterButtonMode || lightTestEnabled || treeState != TreeState::StagingHold ||
+        startAuthorized || !allLanesAreStaged() || end == line + 11 || *end != '\0' ||
+        token != stagingToken) {
+      sendFlashProtocolMessage(PSTR("ERROR:STATE:START_TREE"));
+      return;
+    }
+    startAuthorized = true;
+    stateStartedAtMs = millis();
+    sendFlashProtocolMessage(PSTR("ACK:START_TREE"));
+    sendFlashProtocolMessage(PSTR("EVENT:TREE:START_AUTHORIZED"));
+  } else if (strcmp(line, "PING") == 0) {
     sendProtocolMessage("ACK:PING");
   } else if (strcmp(line, "IDENTIFY") == 0) {
     sendHello();
@@ -1597,7 +1648,8 @@ void updateTree(const unsigned long nowMs) {
       if (!allLanesAreStaged()) {
         sendProtocolMessage("EVENT:TREE:STAGING_ABORTED");
         enterState(TreeState::WaitingForAllLanes, nowMs);
-      } else if (nowMs - stateStartedAtMs >= stagedDelayMs) {
+      } else if ((!starterButtonMode || startAuthorized) &&
+                 nowMs - stateStartedAtMs >= stagedDelayMs) {
         enterState(TreeState::RaceActive, nowMs);
       }
       break;
@@ -1671,7 +1723,7 @@ void loop() {
   updateSerialCommands();
   updateSequentialStaging();
   updateStagingLights();
-  updateTree(nowMs);
+  updateTree(millis());
   updateHeartbeat(nowMs);
   serviceRaceResults();
   serviceSensorDiagnostics();

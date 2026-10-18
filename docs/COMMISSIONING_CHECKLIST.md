@@ -37,6 +37,15 @@ Mega / clone model: ____________________  Serial port: ____________________
 
 Mode: __________  Tree: __________  Staged delay (ms): __________
 
+Start mode: Automatic / Starter Button __________
+
+For the current-source Starter Button feature, install DragMC 0.6.6 or newer,
+select Starter Button in Race Settings, and arm the run. Verify Start Tree stays
+disabled until all participating lanes stage, becomes enabled then, and disables
+after clicking. Check the configured delay before amber. Deliberately roll out
+while waiting and during the delay: authorization must cancel, and restaging
+must require a new click. Beta.2 downloads do not yet include this feature.
+
 Speed-trap length (inches): __________  Measured by: ____________________
 
 The setting is shared across lanes. Record each lane's distance below; if they

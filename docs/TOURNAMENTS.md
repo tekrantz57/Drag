@@ -5,6 +5,29 @@ lanes. Two-lane mode uses physical lanes 1 and 4. Tournament setup selects
 racers and cars from the local SQLite database, then generates heats and stores
 their progression and results.
 
+## Tree Start Control
+
+Under Configure > Race and track settings > Race, Tree start defaults to
+Automatic. Select Starter Button to require the on-screen Start Tree button
+after all participating lanes stage. The choice is saved and applies to both
+practice and tournament heats. Arm Practice Run / Arm Heat still prepares the run;
+Start Tree only authorizes the staged start, not an unstaged or unarmed race.
+For practice, Start Tree is at the bottom of Practice Pass Results, next to Close.
+The main window only arms the practice run; it has no duplicate starter control.
+Tournament starts are controlled in the tournament runner. Simulated practice
+results do not show a hardware starter control.
+
+The button stays disabled until every participating lane is staged, disables
+after one click, and is cancelled on rollout, disconnect, or controller reboot.
+After a rollout, restage and press it again. The configured staged delay begins
+when the controller accepts the click; amber cadence and bracket offsets remain
+controller-timed. A rollout during that delay also cancels the authorization.
+
+This requires the current-source Windows build and DragMC 0.6.6 (protocol 9+).
+Beta.2 downloads do not include this feature. Update controller firmware before
+testing it; older firmware can still be used in Automatic mode. Simulated demo
+heats do not require or exercise the hardware starter button.
+
 ## Race Results
 
 The Mega is authoritative for reaction times, fouls, finish order, bracket

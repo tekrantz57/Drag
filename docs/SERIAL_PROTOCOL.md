@@ -5,6 +5,9 @@ ASCII `0x20` through `0x7E` are not permitted inside a message.
 
 The serial link runs at 115200 baud.
 
+Current source firmware is DragMC 0.6.6, protocol 9. Protocol 9 adds optional
+starter-button authorization; pins and sensor timing are unchanged.
+
 ```text
 PART:PART:PART:XX
 ```
@@ -50,11 +53,42 @@ stage beam clearing at launch.
 - `FULL`: amber 1, amber 2, amber 3, and green are separated by 500 ms.
 - `PRO`: all three ambers illuminate together, followed by green after 400 ms.
 
-The staged delay is independent of Tree cadence. It controls the wait from all
-participating lanes being fully staged to the first amber and accepts `0`
+The staged delay is independent of Tree cadence. In Automatic mode it controls
+the wait from all participating lanes being fully staged to the first amber and accepts `0`
 through `5000` milliseconds. The default is `500` ms. If any participating car
 leaves the stage beam during this delay, the start is aborted and staging
 begins again without assigning a red light.
+
+### Starter Button Mode
+
+`SET:START_MODE:MANUAL` selects starter authorization; `AUTO` is the power-up
+default. Mode changes are rejected during an active race or result delivery.
+`ARM:MANUAL` and `ARM:AUTO` atomically choose the mode and reset the race for a
+new run, including if replacing a previous active run. This avoids a reset
+briefly falling back to automatic mode while configuration commands arrive.
+Legacy `RESET` preserves the selected start mode.
+
+In manual mode all participating lanes must stage before
+`EVENT:TREE:WAITING_FOR_START:<token>` is emitted. The operator sends
+`START_TREE:<token>`. The controller accepts it only in the staged state, with
+all required beams still satisfied, no light test, and no prior authorization.
+It replies `ACK:START_TREE` and `EVENT:TREE:START_AUTHORIZED`, then runs the
+configured staged delay starting at acceptance, followed by the normal Tree.
+An early, duplicate, stale-token, or otherwise invalid request produces
+`ERROR:STATE:START_TREE`; it never starts or restarts the delay.
+
+Rollout during the wait or delay aborts staging and cancels authorization.
+Restaging creates a different nonzero 16-bit token and requires a fresh click.
+The token is an attempt identifier, not authentication. It wraps after 65,535
+staging attempts. Each heartbeat now includes `START_TOKEN:<token>`; state is
+`WAITING_FOR_START` before authorization or `START_DELAY` afterward. This lets
+Windows recover readiness if the initial staged event was missed. Status adds
+`STATUS:START_MODE:<AUTO|MANUAL>:START_TOKEN:<token>:AUTHORIZED:<0|1>`.
+
+Windows enables Start Tree only for an armed manual run, a compatible identified
+Mega (protocol 9+), fresh heartbeat, and a current staged token. It disables
+after clicking, on rollout, race start/completion, reboot, or disconnect.
+Demo simulation remains independent of the physical starter control.
 
 Staging detection defaults to `BOTH_BLOCKED`, which requires the pre-stage and
 stage beams to be blocked at the same time. `IN_ORDER` is intended for manual

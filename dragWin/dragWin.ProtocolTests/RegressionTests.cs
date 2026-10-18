@@ -6,6 +6,7 @@ internal static class RegressionTests
 {
     public static void Run()
     {
+        RunStarterTests();
         foreach (var text in new[] { "999999999", decimal.MaxValue.ToString(), "-1", "0.099", "60.001", "bad" })
             Check(!DialInput.TryParseMilliseconds(text, out _), $"Invalid dial accepted: {text}");
         Check(DialInput.TryParseMilliseconds("0.100", out var minimum) && minimum == 100, "Minimum dial rejected.");
@@ -23,12 +24,55 @@ internal static class RegressionTests
         if (failure is not null) throw new InvalidOperationException("Regression tests failed.", failure);
     }
 
+    private static void RunStarterTests()
+    {
+        var session = new StarterButtonSession();
+        var staged = ProtocolMessage.Create("EVENT", "TREE", "WAITING_FOR_START", "42");
+        session.Observe(staged);
+        Check(!session.CanStart(true, 9), "An unarmed run enabled Start Tree.");
+        session.Arm(false);
+        session.Observe(staged);
+        Check(!session.CanStart(true, 9), "Automatic mode enabled Start Tree.");
+        session.Arm(true);
+        Check(!session.CanStart(true, 9), "Unstaged lanes enabled Start Tree.");
+        session.Observe(staged);
+        Check(!session.CanStart(false, 9) && !session.CanStart(true, 8) && !session.CanStart(true, null),
+            "Disconnected or incompatible controller enabled Start Tree.");
+        Check(session.CanStart(true, 9), "All staged lanes did not enable the manual starter.");
+        Check(session.TakeCommand(true, 9)!.SequenceEqual(new[] { "START_TREE", "42" }), "Starter lost its staging token.");
+        Check(session.TakeCommand(true, 9) is null, "Repeated click issued a second start.");
+        session.Observe(ProtocolMessage.Create("HEARTBEAT", "100", "STATE", "WAITING_FOR_START", "START_TOKEN", "42"));
+        Check(!session.CanStart(true, 9), "Repeated heartbeat reenabled a pending start.");
+        session.Observe(ProtocolMessage.Create("EVENT", "TREE", "STAGING_ABORTED"));
+        Check(!session.CanStart(true, 9), "Rollout retained start authorization.");
+        session.Observe(ProtocolMessage.Create("HEARTBEAT", "200", "STATE", "WAITING_FOR_START", "START_TOKEN", "43"));
+        Check(session.TakeCommand(true, 9)![1] == "43", "Restaging reused the old staging token.");
+        session.Observe(ProtocolMessage.Create("EVENT", "TREE", "START_AUTHORIZED"));
+        Check(!session.CanStart(true, 9), "Authorized start remained enabled.");
+        session.Observe(ProtocolMessage.Create("EVENT", "TREE", "BRACKET_START"));
+        session.Observe(staged);
+        Check(!session.CanStart(true, 9), "A race-active session accepted another start.");
+        session.Arm(true);
+        session.Observe(staged);
+        session.Cancel();
+        session.Observe(staged);
+        Check(!session.CanStart(true, 9), "Cancelled session was rearmed by an event.");
+        session.Arm(true);
+        session.Observe(staged);
+        session.Observe(ProtocolMessage.Create("HELLO"));
+        Check(!session.CanStart(true, 9), "Controller reboot retained the starter state.");
+        Check(StarterButtonSession.Supported(new ControllerIdentity("DRAG_MC", "0.6.6", 9, "MEGA2560")) &&
+              !StarterButtonSession.Supported(new ControllerIdentity("DRAG_MC_DUE_LIGHT_TEST", "1", 9, "SAM3X8E")),
+            "Starter capability check accepted the wrong board.");
+    }
+
     private static void RunUiAndRecoveryTests()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"drag-regressions-{Guid.NewGuid():N}");
         Directory.CreateDirectory(directory);
         try
         {
+            RunPracticeStarterViewTests();
             RunDemoReleaseTests(directory);
             var repository = new RaceRepository(Path.Combine(directory, "test.db"), Path.Combine(directory, "backups"));
             var racer = repository.AddRacer("Regression racer");
@@ -88,7 +132,8 @@ internal static class RegressionTests
 
             using var settings = new RaceSettingsForm("BRACKET", 4, "FULL", "BOTH_BLOCKED", 0.5M,
                 [10M, 10M, 10M, 10M], 660M, 12M, [], false, "saved-voice", SpeechBackendMode.Piper,
-                false, false, false);
+                false, false, false, manualTreeStart: true);
+            Check(settings.ManualTreeStart, "Race settings lost Starter Button mode.");
             var calls = 0;
             var completion = new TaskCompletionSource<IReadOnlyList<string>>();
             settings.VoiceDiscovery = _ => { ++calls; return completion.Task; };
@@ -130,13 +175,49 @@ internal static class RegressionTests
         }
     }
 
+    private static void RunPracticeStarterViewTests()
+    {
+        using var client = new DragSerialClient();
+        using var form = new PassResultsForm(client, false, "", SpeechBackendMode.None);
+        form.BeginPass([1], []);
+        var button = (Button)Field(form, "startTreeButton");
+        var requests = 0;
+        form.StartTreeRequested += (_, _) => ++requests;
+        void Click() => typeof(Control).GetMethod("OnClick", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(button, [EventArgs.Empty]);
+        form.UpdateTreeStartState(false, true);
+        Check(!button.Enabled, "Automatic practice enabled Start Tree in pass results.");
+        form.UpdateTreeStartState(true, false);
+        Click();
+        Check(requests == 0, "Unstaged practice sent a start request.");
+        form.UpdateTreeStartState(true, true);
+        Check(button.Enabled, "Staged manual practice did not enable Start Tree in pass results.");
+        Click();
+        Click();
+        Check(requests == 1 && !button.Enabled, "Pass-results starter did not disable after one click.");
+        form.UpdateTreeStartState(true, false);
+        Check(!button.Enabled, "Rollout/disconnect readiness did not disable the pass-results starter.");
+        form.BeginPass([1], [], simulated: true);
+        form.UpdateTreeStartState(true, true);
+        Check(!button.Enabled, "Simulated practice enabled the hardware starter in pass results.");
+        form.BeginPass([1], []);
+        form.UpdateTreeStartState(true, true);
+        Check(button.Enabled, "A new physical practice pass did not restore the starter control.");
+        Invoke(form, "ClearResults");
+        form.UpdateTreeStartState(true, true);
+        Check(!button.Enabled, "Cleared results retained an active starter control.");
+    }
+
     private static void RunDemoReleaseTests(string directory)
     {
         var repository = new RaceRepository(Path.Combine(directory, "demo.db"), Path.Combine(directory, "demo-backups"));
         Check(repository.GetCars().Count == 0, "Demo test did not start with an empty database.");
-        using (var main = new MainForm(demoMode: true, repository: repository, settings: new AppSettings()))
+        using (var main = new MainForm(demoMode: true, repository: repository, settings: new AppSettings { ManualTreeStart = true }))
         {
             _ = main.Handle;
+            Check(typeof(MainForm).GetField("startTreeButton", BindingFlags.Instance | BindingFlags.NonPublic) is null,
+                "Main window still contains a duplicate starter control.");
+            Check(!(bool)Invoke(main, "CanStartPracticeTree")!, "Demo allowed a hardware start request.");
             var help = main.MainMenuStrip!.Items.OfType<ToolStripMenuItem>().Single(item => item.Text == "Help");
             Check(help.DropDownItems.OfType<ToolStripMenuItem>().Any(item => item.Text == "Copy Version Information"),
                 "Help menu omitted version copying.");
@@ -154,6 +235,8 @@ internal static class RegressionTests
                 "Demo allowed a firmware update.");
             Invoke(main, "DemoPracticeRun");
             Check(Field(main, "passResultsForm") is PassResultsForm, "Demo practice did not open pass results.");
+            Check(!((Button)Field(Field(main, "passResultsForm"), "startTreeButton")).Enabled,
+                "Demo practice enabled the starter control in pass results.");
             var practiceGrid = (DataGridView)Field(Field(main, "passResultsForm"), "resultsGrid");
             Check(practiceGrid.Rows.Cast<DataGridViewRow>().All(row =>
                 row.Cells["Source"].Value?.ToString() == "Simulated"), "Practice demo omitted source labels.");
@@ -169,7 +252,8 @@ internal static class RegressionTests
             "Repeated sample creation duplicated racers or cars.");
         using var client = new DragSerialClient();
         using var runner = new TournamentRunnerForm(tournament, repository, client, 500, "BOTH_BLOCKED",
-            [1, 2, 3, 4], false, "", SpeechBackendMode.None, new TournamentReportExportOptions(), demoMode: true);
+            [1, 2, 3, 4], false, "", SpeechBackendMode.None, new TournamentReportExportOptions(), demoMode: true, manualTreeStart: true);
+        Check(!((Button)Field(runner, "startTreeButton")).Enabled, "Demo tournament enabled the hardware starter.");
         Check(((Button)Field(runner, "sendHeatButton")).Text == "Run Demo Heat", "Demo retained the hardware arm button.");
         // Test report generation separately without a modal window blocking the test runner.
         runner.GetType().GetField("completionReportShown", BindingFlags.Instance | BindingFlags.NonPublic)!

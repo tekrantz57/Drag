@@ -9,6 +9,7 @@ public sealed class AppSettings
     public int LaneCount { get; set; } = 4;
     public string TreeMode { get; set; } = "FULL";
     public string StagingMode { get; set; } = "BOTH_BLOCKED";
+    public bool ManualTreeStart { get; set; }
     public decimal StagedDelaySeconds { get; set; } = 0.500M;
     public decimal TrackLengthInches { get; set; } = 660.000M;
     public decimal SpeedTrapLengthInches { get; set; } = 12.000M;

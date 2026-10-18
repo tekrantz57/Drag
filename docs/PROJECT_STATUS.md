@@ -13,6 +13,11 @@ See `TRY_DEMO.md`; four-lane physical validation is still pending.
 
 ## Completed
 
+- Current source adds optional, saved Starter Button mode for practice and
+  tournament heats, with controller-enforced staging, staged delay, and stale-click
+  rejection. Requires DragMC 0.6.6 / protocol 9; not included in beta.2 downloads.
+  Host state-machine and Windows regression tests pass; physical validation pending.
+
 - Four-lane and two-lane race models, with two-lane mode using lanes 1 and 4.
 - Heads-up and bracket logic, Full and Pro Trees, staging modes, staged delay,
   dial-ins, reaction times, breakouts, placements, fouls, and DNFs.
@@ -68,5 +73,5 @@ supported. Reconnect each terminal by function, not mirrored pad position.
   Wine 11.
 
 The current Mega firmware uses approximately 81 percent of its 8 KB SRAM
-(6,711 bytes, leaving 1,481 bytes for local variables, firmware 0.6.5).
+(6,717 bytes, leaving 1,475 bytes for local variables, firmware 0.6.6).
 Reassess memory after all 24 sensor inputs are installed and exercised.
