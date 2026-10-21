@@ -62,8 +62,13 @@ internal static class RegressionTests
         session.Observe(ProtocolMessage.Create("HELLO"));
         Check(!session.CanStart(true, 9), "Controller reboot retained the starter state.");
         Check(StarterButtonSession.Supported(new ControllerIdentity("DRAG_MC", "0.6.6", 9, "MEGA2560")) &&
+              StarterButtonSession.Supported(new ControllerIdentity("DRAG_MC_DUE", "0.1.0", 10, "SAM3X8E")) &&
+              !StarterButtonSession.Supported(new ControllerIdentity("DRAG_MC_DUE", "0.1.0", 8, "SAM3X8E")) &&
+              !StarterButtonSession.Supported(new ControllerIdentity("DRAG_MC_DUE", "0.1.0", 10, "MEGA2560")) &&
               !StarterButtonSession.Supported(new ControllerIdentity("DRAG_MC_DUE_LIGHT_TEST", "1", 9, "SAM3X8E")),
             "Starter capability check accepted the wrong board.");
+        Check(!new ControllerIdentity("DRAG_MC_DUE", "0.1.0", 10, "SAM3X8E").IsExpectedDragMc("0.1.0"),
+            "Due race firmware passed the Mega update identity check.");
     }
 
     private static void RunUiAndRecoveryTests()
@@ -73,6 +78,32 @@ internal static class RegressionTests
         try
         {
             RunPracticeStarterViewTests();
+            RunFinishViewTests();
+            RunScanTimingViewTests();
+            RunSensorScopeTests();
+            using (var boardChoice = new FirmwareBoardSelectionForm())
+            {
+                boardChoice.Show();
+                Application.DoEvents();
+                var controls = boardChoice.Controls[0].Controls.Cast<Control>().ToArray();
+                Check(controls.OfType<RadioButton>().All(button => !button.Checked), "Unknown-board update guessed a board type.");
+                var continueButton = controls.OfType<FlowLayoutPanel>().Single().Controls.OfType<Button>().First();
+                Check(!continueButton.Enabled && boardChoice.BoardProfile == "", "Unknown-board update enabled without explicit confirmation.");
+                controls.OfType<RadioButton>().Last().Checked = true;
+                Check(continueButton.Enabled, "Explicit Due selection did not enable confirmation.");
+                boardChoice.PerformLayout();
+                Check(continueButton.Parent!.Bottom <= boardChoice.Controls[0].ClientSize.Height,
+                    "Firmware board confirmation buttons were clipped.");
+                var boardScreenshot = Environment.GetEnvironmentVariable("DRAG_BOARD_SCREENSHOT");
+                if (!string.IsNullOrEmpty(boardScreenshot))
+                {
+                    using var bitmap = new System.Drawing.Bitmap(boardChoice.Width, boardChoice.Height);
+                    boardChoice.DrawToBitmap(bitmap, new System.Drawing.Rectangle(0, 0, bitmap.Width, bitmap.Height));
+                    bitmap.Save(boardScreenshot);
+                }
+                continueButton.PerformClick();
+                Check(boardChoice.BoardProfile == ControllerFirmwarePackage.DueBoardProfile, "Manual board confirmation selected the wrong profile.");
+            }
             RunDemoReleaseTests(directory);
             var repository = new RaceRepository(Path.Combine(directory, "test.db"), Path.Combine(directory, "backups"));
             var racer = repository.AddRacer("Regression racer");
@@ -92,6 +123,12 @@ internal static class RegressionTests
                 Check(Field(runner, "phase").ToString() == "ReadyToStage", "An unarmed heat accepted a race event.");
                 Invoke(runner, "DemoHeat");
                 Check(Field(runner, "phase").ToString() == "ResultsReady", "Demo heat did not finish.");
+                var finish = (PassFinishResult)Field(runner, "finishResult");
+                Check(finish.Simulated && finish.Lanes.Count == heat.Entries.Count &&
+                    finish.Lanes.All(lane => lane.Racer == "Regression racer" && lane.DialMilliseconds == 10000),
+                    "Tournament finish screen lost lane identities, dials or simulation labels.");
+                Check(finish.Lanes.Count(lane => lane.Advances) == heat.AdvanceCount,
+                    "Finish display changed the tournament advancement decision.");
                 Invoke(runner, "ProcessMessage", ProtocolMessage.Create("EVENT", "TREE", "WAITING_FOR_ALL_LANES"));
                 Invoke(runner, "ProcessMessage", ProtocolMessage.Create("EVENT", "TREE", "ALL_LANES_STAGED"));
                 Invoke(runner, "ProcessMessage", ProtocolMessage.Create("EVENT", "TREE", "BRACKET_START"));
@@ -173,6 +210,143 @@ internal static class RegressionTests
         {
             Directory.Delete(directory, recursive: true);
         }
+    }
+
+    private static void RunFinishViewTests()
+    {
+        var dave = new FinishLaneResult(1, "Dave", "Blue car", "Winner", 20900, 889000, 4802,
+            885, Winner: true);
+        var emby = new FinishLaneResult(2, "Emby", "Red car", "Place 2", 34300, 909300, 4533, 900);
+        var result = new PassFinishResult("Bracket finish", true, [dave, emby]);
+        Check(result.FinishLead().Contains(PassFinishForm.Seconds(18700)) && result.FinishLead().Contains("Lane 1"),
+            "Finish lead ignored bracket head starts.");
+        Check((result with { Lanes = [emby, dave] }).FinishLead() == result.FinishLead(),
+            "Finish lead depended on display ordering.");
+        Check((result with { Lanes = [dave, emby with { DidNotFinish = true }] }).FinishLead() == "",
+            "DNF received a made-up finish lead.");
+        Check((result with { Lanes = [dave, emby with { ReactionUs = null }] }).FinishLead() == "",
+            "Missing timing received a made-up finish lead.");
+        Check((result with { Lanes = [dave, emby with { IsBye = true }] }).FinishLead() == "",
+            "Bye received a finish lead.");
+        Check((result with { Lanes = [dave with { DialMilliseconds = null }, emby] }).FinishLead() == "",
+            "Mixed start modes received a finish lead.");
+        Check((result with { Lanes = [dave with { DialMilliseconds = null }, emby with { DialMilliseconds = null }] })
+            .FinishLead().Contains(PassFinishForm.Seconds(33700)), "Heads-up finish lead subtracted dials.");
+
+        var four = result with
+        {
+            Title = "Saturday Bracket Racing | Round 2 | Heat 3",
+            Lanes = [dave with { Advances = true, IntervalsInstalled = true, Interval1Us = 156100, Interval2Us = 445100 },
+                emby with { Advances = true },
+                emby with { Lane = 3, Racer = "A Racer With A Particularly Long Name", Car = "A Very Long Car Name For Layout Testing",
+                    Outcome = "Winner (least red light)", Winner = true, RedLight = true, ReactionUs = -27000 },
+                emby with { Lane = 4, Outcome = "DNF", DidNotFinish = true, ElapsedUs = null, SpeedMphX100 = null }]
+        };
+        Check(four.FinishLead() == "", "Four-lane race received an ambiguous two-lane finish lead.");
+        var output = Environment.GetEnvironmentVariable("DRAG_FINISH_SCREENSHOTS");
+        void Render(PassFinishResult data, string name, int width, int height)
+        {
+            using var form = new PassFinishForm(data);
+            form.Size = new System.Drawing.Size(width, height);
+            form.Show();
+            Application.DoEvents();
+            Check(form.Result == data && form.Controls.Count > 0, "Finish screen did not render its snapshot.");
+            void CheckBounds(Control parent)
+            {
+                foreach (Control child in parent.Controls)
+                {
+                    Check(child.Left >= 0 && child.Top >= 0 && child.Right <= parent.ClientSize.Width &&
+                        child.Bottom <= parent.ClientSize.Height,
+                        $"Finish screen clipped {child.GetType().Name}: {child.Text}");
+                    CheckBounds(child);
+                }
+            }
+            CheckBounds(form);
+            if (!string.IsNullOrEmpty(output))
+            {
+                Directory.CreateDirectory(output);
+                using var bitmap = new System.Drawing.Bitmap(form.Width, form.Height);
+                form.DrawToBitmap(bitmap, new System.Drawing.Rectangle(0, 0, bitmap.Width, bitmap.Height));
+                bitmap.Save(Path.Combine(output, name + ".png"));
+            }
+            form.Close();
+        }
+        Render(result, "two-lane", 1280, 820);
+        Render(four, "four-lane-small", 820, 640);
+        Render(four, "four-lane-desktop", 1920, 1080);
+        Render(result with { Lanes = [dave with { DialMilliseconds = null }] }, "single-lane", 1024, 768);
+
+        using var client = new DragSerialClient();
+        using var practice = new PassResultsForm(client, false, "", SpeechBackendMode.None);
+        practice.BeginPass([1, 2], [], simulated: true, dialMilliseconds: new Dictionary<int, int> { [1] = 885, [2] = 900 });
+        practice.ProcessMessages([
+            ProtocolMessage.Create("EVENT", "LANE", "1", "REACTION_US", "20900"),
+            ProtocolMessage.Create("RESULT", "LANE", "1", "ELAPSED_US", "889000"),
+            ProtocolMessage.Create("RESULT", "LANE", "1", "VALID"),
+            ProtocolMessage.Create("EVENT", "TREE", "RACE_COMPLETE")]);
+        var snapshot = (PassFinishResult)Field(practice, "finishResult");
+        Check(snapshot.Simulated && snapshot.Lanes[0].DialMilliseconds == 885 &&
+            snapshot.Lanes[0].ElapsedUs == 889000 && snapshot.Lanes[1].ElapsedUs is null,
+            "Practice finish snapshot fabricated a result or lost its dial.");
+        Invoke(practice, "ShowFinish");
+        ((Form)Field(practice, "finishForm")).Close();
+        Invoke(practice, "ShowFinish");
+        Check(((PassFinishForm)Field(practice, "finishForm")).Result == snapshot, "Reopen changed the finish snapshot.");
+        practice.BeginPass([1], []);
+        Check(!((Button)Field(practice, "finishButton")).Enabled &&
+            ((Form)Field(practice, "finishForm")).IsDisposed, "New pass retained a stale finish screen.");
+    }
+
+    private static void RunSensorScopeTests()
+    {
+        using var client = new DragSerialClient();
+        typeof(DragSerialClient).GetField("currentControllerIdentity", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(client, new ControllerIdentity("DRAG_MC_DUE", "0.1.2", 11, "SAM3X8E"));
+        using var form = new SensorTestForm(client);
+        Check(form.SelectedLanes.SequenceEqual([1]), "Sensor Test did not default to lane 1.");
+        var command = (string[])Invoke(form, "MonitorCommand")!;
+        Check(command.SequenceEqual(["SENSOR_MONITOR", "START", "1"]), "Scoped command did not select lane 1.");
+        var labels = (Label[,])Field(form, "stateLabels");
+        Check(labels[3, 0].Text.Contains("D50") && labels[3, 5].Text.Contains("D53"), "Due pin labels still show Mega A12-A15.");
+        Check(labels[1, 0].Text.Contains("Not monitored"), "Unselected lane displayed a stale sensor state.");
+        var checks = (CheckBox[])Field(form, "laneChecks");
+        checks[0].Checked = false;
+        Check(((string[])Invoke(form, "MonitorCommand")!).Last() == "NONE", "Empty scope enabled all lanes.");
+        checks[3].Checked = true;
+        Check(((string[])Invoke(form, "MonitorCommand")!).Last() == "4", "Lane 4 scope changed race participants instead of monitoring.");
+        Invoke(form, "CaptureSensorDiagnostic", ProtocolMessage.Create("SENSOR", "4", "FINISH", "INSTALLED", "1", "CAPTURE", "0"));
+        Invoke(form, "RefreshPendingSensorLabels");
+        Check(labels[3, 5].Text.Contains("Capture disabled"), "Race-priority capture suppression was shown as a valid clear state.");
+        var screenshot = Environment.GetEnvironmentVariable("DRAG_SENSOR_SCREENSHOT");
+        if (!string.IsNullOrEmpty(screenshot))
+        {
+            form.Size = new System.Drawing.Size(1050, 600);
+            form.Show();
+            Application.DoEvents();
+            using var bitmap = new System.Drawing.Bitmap(form.Width, form.Height);
+            form.DrawToBitmap(bitmap, new System.Drawing.Rectangle(0, 0, bitmap.Width, bitmap.Height));
+            bitmap.Save(screenshot);
+        }
+        typeof(DragSerialClient).GetField("currentControllerIdentity", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(client, new ControllerIdentity("DRAG_MC", "0.6.7", 10, "MEGA2560"));
+        Check(((string[])Invoke(form, "MonitorCommand")!).Length == 2, "Legacy controller received an unsupported scoped command.");
+    }
+
+    private static void RunScanTimingViewTests()
+    {
+        using var client = new DragSerialClient();
+        using var form = new SensorTestForm(client);
+        Invoke(form, "RequestSensorUpdates");
+        Check(!((Button)Field(form, "scanTimingButton")).Enabled, "Disconnected scan timing request was enabled.");
+        Invoke(form, "HandleControlMessage", ProtocolMessage.Create("STATUS", "SCAN", "MAX_GAP_US", "1500", "MAX_DURATION_US", "300"));
+        var label = (Label)Field(form, "scanTimingLabel");
+        Check(label.Text.Contains(1500.ToString("N0")) && label.Text.Contains(300.ToString("N0")),
+            "Scan timing response was not displayed.");
+        var previous = label.Text;
+        Invoke(form, "HandleControlMessage", ProtocolMessage.Create("STATUS", "SCAN", "MAX_GAP_US", "bad", "MAX_DURATION_US", "300"));
+        Check(label.Text == previous, "Malformed scan timing response replaced the display.");
+        Invoke(form, "HandleControlMessage", ProtocolMessage.Create("ACK", "RESET_SENSOR_DIAGNOSTICS"));
+        Check(label.Text.Contains("reset"), "Reset counts retained stale scan timing.");
     }
 
     private static void RunPracticeStarterViewTests()

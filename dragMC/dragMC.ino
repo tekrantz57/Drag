@@ -1,15 +1,19 @@
 #include <Arduino.h>
 #include <limits.h>
 #include "FirmwareVersion.h"
+#include "BoardProfile.h"
+#ifdef DRAG_DUE_CAPTURE
+#include "DueBeamSensor.h"
+#endif
 
 namespace {
 
 constexpr uint8_t MAX_LANE_COUNT = 4;
 constexpr uint8_t LIGHTS_PER_LANE = 7;
 constexpr uint8_t SENSORS_PER_LANE = 6;
-constexpr char FIRMWARE_NAME[] = "DRAG_MC";
-constexpr char FIRMWARE_VERSION[] = DRAGMC_FIRMWARE_VERSION;
-constexpr uint8_t PROTOCOL_VERSION = 9;
+constexpr const char* FIRMWARE_NAME = DragBoard::Product;
+constexpr const char* FIRMWARE_VERSION = DragBoard::Version;
+constexpr uint8_t PROTOCOL_VERSION = 11;
 
 enum LightIndex : uint8_t {
   PreStageLight,
@@ -33,19 +37,8 @@ enum SensorIndex : uint8_t {
 constexpr const char* SENSOR_NAMES[SENSORS_PER_LANE] = {
     "PRESTAGE", "STAGE", "INTERVAL_1", "INTERVAL_2", "SPEED_TRAP", "FINISH"};
 
-constexpr uint8_t LIGHT_PINS[MAX_LANE_COUNT][LIGHTS_PER_LANE] = {
-    {22, 23, 24, 25, 26, 27, 28},
-    {29, 30, 31, 32, 33, 34, 35},
-    {36, 37, 38, 39, 40, 41, 42},
-    {43, 44, 45, 46, 47, 48, 49}
-};
-
-constexpr uint8_t SENSOR_PINS[MAX_LANE_COUNT][SENSORS_PER_LANE] = {
-    {A0, A1, 2, 3, A2, A3},
-    {A4, A5, 4, 5, A6, A7},
-    {A8, A9, 6, 7, A10, A11},
-    {A12, A13, 8, 9, A14, A15}
-};
+using DragBoard::LIGHT_PINS;
+using DragBoard::SENSOR_PINS;
 
 constexpr unsigned long DEFAULT_TRACK_LENGTH_IN_X1000 = 660000;
 constexpr unsigned long DEFAULT_SPEED_TRAP_LENGTH_IN_X1000 = 12000;
@@ -94,6 +87,9 @@ enum class LaneTreeStep : uint8_t {
   Green
 };
 
+#ifdef DRAG_DUE_CAPTURE
+using DebouncedBeamSensor = DragDue::BeamSensor;
+#else
 class DebouncedBeamSensor {
  public:
   void begin(const uint8_t pin) {
@@ -107,7 +103,7 @@ class DebouncedBeamSensor {
     rawPulseStartedAtUs_ = nowUs;
   }
 
-  bool update(const unsigned long nowMs) {
+  bool update(const unsigned long nowMs, const bool immediate = false) {
     const unsigned long nowUs = micros();
     becameBlocked_ = false;
     becameUnblocked_ = false;
@@ -129,7 +125,7 @@ class DebouncedBeamSensor {
     }
 
     if (blocked_ == rawBlocked_ ||
-        nowMs - rawChangedAtMs_ < SENSOR_DEBOUNCE_MS) {
+        (!immediate && nowMs - rawChangedAtMs_ < SENSOR_DEBOUNCE_MS)) {
       return changed;
     }
 
@@ -181,6 +177,7 @@ class DebouncedBeamSensor {
   unsigned long lastRawPulseWidthUs_ = 0;
   bool hasCompletedRawPulse_ = false;
 };
+#endif
 
 struct LaneRace {
   bool fouled = false;
@@ -238,6 +235,14 @@ uint32_t pendingSensorDiagnosticMask = 0;
 unsigned long sensorMonitorRenewedAtMs = 0;
 uint8_t sensorDiagnosticCursor = 0;
 bool sensorMonitorEnabled = false;
+uint8_t sensorMonitorLaneMask = 0x0F;
+#ifdef DRAG_DUE_CAPTURE
+bool dueRaceCaptureArmed = false;
+#endif
+unsigned long previousScanStartedUs = 0;
+unsigned long maximumScanGapUs = 0;
+unsigned long maximumScanDurationUs = 0;
+bool scanTimingAvailable = false;
 bool lightTestEnabled = false;
 bool raceResultsPending = false;
 uint8_t resultLaneCursor = 0;
@@ -249,6 +254,8 @@ uint8_t placementLanes[MAX_LANE_COUNT] = {};
 void formatHeatLanes(char* destination, const size_t destinationSize);
 void formatSplitLanes(char* destination, const size_t destinationSize);
 const char* treeStateName();
+void refreshSensorCaptureScope();
+void armSensorCapture();
 
 uint8_t calculateChecksum(const char* payload) {
   uint8_t checksum = 0;
@@ -313,10 +320,11 @@ void sendHello() {
   snprintf(
       message,
       sizeof(message),
-      "HELLO:%s:%s:PROTO:%u:MCU:MEGA2560:LANES:%u:HEAT_LANES:%s",
+      "HELLO:%s:%s:PROTO:%u:MCU:%s:LANES:%u:HEAT_LANES:%s",
       FIRMWARE_NAME,
       FIRMWARE_VERSION,
       PROTOCOL_VERSION,
+      DragBoard::Mcu,
       activeLaneCount,
       heatLanes);
   sendProtocolMessage(message);
@@ -547,6 +555,9 @@ void enterState(const TreeState newState, const unsigned long nowMs) {
       break;
 
     case TreeState::ShowingResults:
+#ifdef DRAG_DUE_CAPTURE
+      dueRaceCaptureArmed = false;
+#endif
       break;
 
     case TreeState::WaitingForClear:
@@ -556,9 +567,22 @@ void enterState(const TreeState newState, const unsigned long nowMs) {
   }
 }
 
+#ifdef DRAG_DUE_CAPTURE
+bool laneHasCaptureFault(const uint8_t lane) {
+  for (uint8_t sensor = 0; sensor < SENSORS_PER_LANE; ++sensor) {
+    if ((sensor == Split1Sensor || sensor == Split2Sensor) && !laneHasSplitSensors(lane)) continue;
+    if (sensors[lane][sensor].captureFault()) return true;
+  }
+  return false;
+}
+#endif
+
 bool allLanesAreStaged() {
   for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
     if (!laneParticipates(lane)) continue;
+#ifdef DRAG_DUE_CAPTURE
+    if (laneHasCaptureFault(lane)) return false;
+#endif
     const bool preStageSatisfied =
         stagingMode == StagingMode::BothBlocked
             ? sensors[lane][PreStageSensor].isBlocked()
@@ -744,6 +768,9 @@ void formatTrapSpeed(const uint8_t lane, char* message, const size_t size) {
 }
 
 void updateLaneRace(const uint8_t lane) {
+#ifdef DRAG_DUE_CAPTURE
+  if (laneHasCaptureFault(lane)) return;
+#endif
   LaneRace& result = lanes[lane];
   if (result.fouled || result.finished) return;
 
@@ -1081,11 +1108,35 @@ bool sensorIsInstalled(const uint8_t lane, const uint8_t sensor) {
          laneHasSplitSensors(lane);
 }
 
+void refreshSensorCaptureScope() {
+#ifdef DRAG_DUE_CAPTURE
+  for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
+    const bool wanted = !lightTestEnabled && (dueRaceCaptureArmed ? laneParticipates(lane) :
+        sensorMonitorEnabled && (sensorMonitorLaneMask & (1U << lane)) != 0);
+    for (uint8_t sensor = 0; sensor < SENSORS_PER_LANE; ++sensor)
+      sensors[lane][sensor].setEnabled(wanted && sensorIsInstalled(lane, sensor));
+  }
+#endif
+}
+
+void armSensorCapture() {
+#ifdef DRAG_DUE_CAPTURE
+  for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane)
+    for (uint8_t sensor = 0; sensor < SENSORS_PER_LANE; ++sensor)
+      sensors[lane][sensor].setEnabled(false);
+  dueRaceCaptureArmed = true;
+#endif
+}
+
+bool sensorIsMonitored(const uint8_t lane, const uint8_t sensor) {
+  return (sensorMonitorLaneMask & (1U << lane)) != 0 && sensorIsInstalled(lane, sensor);
+}
+
 uint32_t installedSensorBits() {
   uint32_t bits = 0;
   for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
     for (uint8_t sensor = 0; sensor < SENSORS_PER_LANE; ++sensor) {
-      if (sensorIsInstalled(lane, sensor)) {
+      if (sensorIsMonitored(lane, sensor)) {
         bits |= 1UL << sensorBitIndex(lane, sensor);
       }
     }
@@ -1094,12 +1145,16 @@ uint32_t installedSensorBits() {
 }
 
 void queueSensorDiagnosticSnapshot(const bool includeUninstalled) {
-  pendingSensorDiagnosticMask |=
-      includeUninstalled ? ALL_SENSOR_BITS : installedSensorBits();
+  uint32_t bits = 0;
+  for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane)
+    if ((sensorMonitorLaneMask & (1U << lane)) != 0)
+      for (uint8_t sensor = 0; sensor < SENSORS_PER_LANE; ++sensor)
+        if (includeUninstalled || sensorIsInstalled(lane, sensor)) bits |= 1UL << sensorBitIndex(lane, sensor);
+  pendingSensorDiagnosticMask |= bits;
 }
 
 void queueChangedSensorDiagnostic(const uint8_t lane, const uint8_t sensor) {
-  if (!sensorMonitorEnabled || !sensorIsInstalled(lane, sensor)) return;
+  if (!sensorMonitorEnabled || !sensorIsMonitored(lane, sensor)) return;
   pendingSensorDiagnosticMask |= 1UL << sensorBitIndex(lane, sensor);
 }
 
@@ -1120,14 +1175,20 @@ void serviceSensorDiagnostics() {
     const uint8_t sensor = bitIndex % SENSORS_PER_LANE;
     const DebouncedBeamSensor& beam = sensors[lane][sensor];
     const uint8_t installed = sensorIsInstalled(lane, sensor) ? 1 : 0;
+#ifdef DRAG_DUE_CAPTURE
+    const uint8_t capture = beam.isEnabled() && !beam.captureFault() ? 1 : 0;
+#else
+    const uint8_t capture = 1;
+#endif
     char message[132];
     if (beam.hasCompletedRawPulse()) {
       snprintf_P(
           message, sizeof(message),
-          PSTR("SENSOR:%u:%s:INSTALLED:%u:BLOCKED:%u:RAW:%u:EDGES:%lu:PULSE_US:%lu"),
+          PSTR("SENSOR:%u:%s:INSTALLED:%u:CAPTURE:%u:BLOCKED:%u:RAW:%u:EDGES:%lu:PULSE_US:%lu"),
           lane + 1,
           SENSOR_NAMES[sensor],
           installed,
+          capture,
           beam.isBlocked() ? 1 : 0,
           beam.isRawBlocked() ? 1 : 0,
           beam.blockedEdgeCount(),
@@ -1135,10 +1196,11 @@ void serviceSensorDiagnostics() {
     } else {
       snprintf_P(
           message, sizeof(message),
-          PSTR("SENSOR:%u:%s:INSTALLED:%u:BLOCKED:%u:RAW:%u:EDGES:%lu:PULSE_US:NONE"),
+          PSTR("SENSOR:%u:%s:INSTALLED:%u:CAPTURE:%u:BLOCKED:%u:RAW:%u:EDGES:%lu:PULSE_US:NONE"),
           lane + 1,
           SENSOR_NAMES[sensor],
           installed,
+          capture,
           beam.isBlocked() ? 1 : 0,
           beam.isRawBlocked() ? 1 : 0,
           beam.blockedEdgeCount());
@@ -1155,6 +1217,7 @@ void startSensorMonitor(const unsigned long nowMs) {
   sensorMonitorRenewedAtMs = nowMs;
   if (sensorMonitorEnabled) return;
   sensorMonitorEnabled = true;
+  refreshSensorCaptureScope();
   queueSensorDiagnosticSnapshot(true);
   sendFlashProtocolMessage(PSTR("ACK:SENSOR_MONITOR:START"));
 }
@@ -1162,6 +1225,7 @@ void startSensorMonitor(const unsigned long nowMs) {
 void stopSensorMonitor() {
   sensorMonitorEnabled = false;
   pendingSensorDiagnosticMask = 0;
+  refreshSensorCaptureScope();
   sendFlashProtocolMessage(PSTR("ACK:SENSOR_MONITOR:STOP"));
 }
 
@@ -1172,6 +1236,7 @@ void updateSensorMonitor(const unsigned long nowMs) {
   }
   sensorMonitorEnabled = false;
   pendingSensorDiagnosticMask = 0;
+  refreshSensorCaptureScope();
 }
 
 bool tryParseLightName(const char* value, LightIndex& light) {
@@ -1278,6 +1343,8 @@ void sendSensorDiagnostics() {
 }
 
 void resetSensorDiagnostics() {
+  maximumScanGapUs = maximumScanDurationUs = 0;
+  scanTimingAvailable = false;
   for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
     for (uint8_t sensor = 0; sensor < SENSORS_PER_LANE; ++sensor) {
       sensors[lane][sensor].resetDiagnostics();
@@ -1548,9 +1615,11 @@ void processCommand(char* line) {
   }
 
   if (strcmp_P(line, PSTR("ARM:MANUAL")) == 0 || strcmp_P(line, PSTR("ARM:AUTO")) == 0) {
+    armSensorCapture();
     starterButtonMode = line[4] == 'M';
     stopLightTest(false);
     enterState(TreeState::WaitingForAllLanes, millis());
+    refreshSensorCaptureScope();
     sendFlashProtocolMessage(starterButtonMode ? PSTR("ACK:ARM:MANUAL") : PSTR("ACK:ARM:AUTO"));
   } else if (strncmp_P(line, PSTR("START_TREE:"), 11) == 0) {
     char* end = nullptr;
@@ -1571,19 +1640,53 @@ void processCommand(char* line) {
     sendHello();
   } else if (strcmp(line, "STATUS") == 0) {
     sendStatus();
+  } else if (strcmp_P(line, PSTR("SCAN_DIAGNOSTICS")) == 0) {
+    char message[100];
+    snprintf_P(message, sizeof(message),
+        PSTR("STATUS:SCAN:MAX_GAP_US:%lu:MAX_DURATION_US:%lu"),
+        maximumScanGapUs, maximumScanDurationUs);
+    sendProtocolMessage(message);
   } else if (strcmp(line, "SENSOR_DIAGNOSTICS") == 0) {
     sendSensorDiagnostics();
   } else if (strcmp_P(line, PSTR("SENSOR_MONITOR:START")) == 0) {
+    const bool changed = sensorMonitorLaneMask != 0x0F;
+    sensorMonitorLaneMask = 0x0F;
     startSensorMonitor(millis());
+    refreshSensorCaptureScope();
+    if (changed) queueSensorDiagnosticSnapshot(true);
+  } else if (strncmp_P(line, PSTR("SENSOR_MONITOR:START:"), 21) == 0) {
+    const char* list = line + 21;
+    uint8_t mask = 0;
+    bool valid = strcmp(list, "NONE") == 0;
+    if (!valid) {
+      valid = *list != '\0';
+      while (*list && valid) {
+        if (*list < '1' || *list > '4') { valid = false; break; }
+        const uint8_t bit = 1U << (*list++ - '1');
+        if (mask & bit) { valid = false; break; }
+        mask |= bit;
+        if (*list == '\0') break;
+        if (*list++ != ',' || *list == '\0') valid = false;
+      }
+    }
+    if (!valid) { sendProtocolMessage("ERROR:VALUE:SENSOR_MONITOR"); return; }
+    const bool changed = sensorMonitorLaneMask != mask;
+    sensorMonitorLaneMask = mask;
+    if (changed) pendingSensorDiagnosticMask = 0;
+    startSensorMonitor(millis());
+    refreshSensorCaptureScope();
+    if (changed) queueSensorDiagnosticSnapshot(true);
   } else if (strcmp_P(line, PSTR("SENSOR_MONITOR:STOP")) == 0) {
     stopSensorMonitor();
   } else if (strcmp(line, "RESET_SENSOR_DIAGNOSTICS") == 0) {
     resetSensorDiagnostics();
     sendProtocolMessage("ACK:RESET_SENSOR_DIAGNOSTICS");
   } else if (strcmp(line, "RESET") == 0) {
+    armSensorCapture();
     stopLightTest(false);
     sendProtocolMessage("ACK:RESET");
     enterState(TreeState::WaitingForAllLanes, millis());
+    refreshSensorCaptureScope();
   } else if (strncmp_P(line, PSTR("LIGHT_TEST:"), 11) == 0) {
     processLightTestCommand(line);
   } else if (strncmp(line, "SET:", 4) == 0) {
@@ -1638,6 +1741,10 @@ void updateSerialCommands() {
 }
 
 void updateTree(const unsigned long nowMs) {
+#ifdef DRAG_DUE_CAPTURE
+  if (!dueRaceCaptureArmed && (treeState == TreeState::WaitingForAllLanes ||
+      treeState == TreeState::StagingHold || treeState == TreeState::RaceActive)) return;
+#endif
   if (lightTestEnabled) return;
   switch (treeState) {
     case TreeState::WaitingForAllLanes:
@@ -1691,6 +1798,45 @@ void updateTree(const unsigned long nowMs) {
   }
 }
 
+void recordScanStart(const unsigned long nowUs) {
+  if (scanTimingAvailable) {
+    const unsigned long gap = nowUs - previousScanStartedUs;
+    if (gap > maximumScanGapUs) maximumScanGapUs = gap;
+  }
+  previousScanStartedUs = nowUs;
+  scanTimingAvailable = true;
+}
+
+void scanSensors(const unsigned long nowMs) {
+  refreshSensorCaptureScope();
+  const unsigned long startedUs = micros();
+  recordScanStart(startedUs);
+  for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
+    for (uint8_t sensor = 0; sensor < SENSORS_PER_LANE; ++sensor) {
+      // Mega trap/finish use sampled raw edges; Due downstream inputs use ISR edges.
+      // Pre-stage/stage qualification is retained on both boards.
+      const bool immediate = sensor == SpeedTrapSensor || sensor == FinishSensor
+#ifdef DRAG_DUE_CAPTURE
+          || sensor == Split1Sensor || sensor == Split2Sensor
+#endif
+          ;
+      if (sensors[lane][sensor].update(nowMs, immediate)) {
+        queueChangedSensorDiagnostic(lane, sensor);
+      }
+#ifdef DRAG_DUE_CAPTURE
+      if (serialQueueCount < SERIAL_QUEUE_CAPACITY - SERIAL_DIAGNOSTIC_RESERVED_SLOTS &&
+          sensors[lane][sensor].takeNoiseWarning()) {
+        char message[88];
+        snprintf(message, sizeof(message), "ERROR:SENSOR_CAPTURE_NOISE:LANE:%u:SENSOR:%s", lane + 1, SENSOR_NAMES[sensor]);
+        sendProtocolMessage(message);
+      }
+#endif
+    }
+  }
+  const unsigned long duration = micros() - startedUs;
+  if (duration > maximumScanDurationUs) maximumScanDurationUs = duration;
+}
+
 }  // namespace
 
 void setup() {
@@ -1712,13 +1858,7 @@ void setup() {
 
 void loop() {
   const unsigned long nowMs = millis();
-  for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
-    for (uint8_t sensor = 0; sensor < SENSORS_PER_LANE; ++sensor) {
-      if (sensors[lane][sensor].update(nowMs)) {
-        queueChangedSensorDiagnostic(lane, sensor);
-      }
-    }
-  }
+  scanSensors(nowMs);
   updateSensorMonitor(nowMs);
   updateSerialCommands();
   updateSequentialStaging();

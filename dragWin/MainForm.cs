@@ -413,23 +413,31 @@ public sealed class MainForm : Form
         }
 
         ControllerFirmwarePackage package;
-        AvrDudeTool? tool;
+        AvrDudeTool? tool = null;
+        BossacTool? dueTool = null;
         var provider = new AvrDudeProvider();
+        var dueProvider = new BossacProvider();
+        var portName = (string)portSelector.SelectedItem!;
+        var identity = client.CurrentControllerIdentity;
         try
         {
-            var packages = ControllerFirmwarePackage.LoadBundledPackages();
-            package = packages.Count switch
+            var board = FirmwareUpdatePolicy.IdentifyBoard(identity);
+            if (board is null)
             {
-                0 => throw new FileNotFoundException(
-                    "The bundled DragMC firmware package is missing from this installation."),
-                1 => packages[0],
-                _ => throw new InvalidDataException(
-                    "This installation contains more than one DragMC Mega firmware package.")
-            };
-            tool = provider.FindExisting();
+                using var choice = new FirmwareBoardSelectionForm();
+                if (choice.ShowDialog(this) != DialogResult.OK) return;
+                board = choice.BoardProfile;
+            }
+            var packages = ControllerFirmwarePackage.LoadBundledPackages();
+            package = FirmwareUpdatePolicy.SelectPackage(packages, board);
+            FirmwareUpdatePolicy.CheckTarget(package, identity);
+            if (portSelector.SelectedItem as string != portName)
+                throw new InvalidOperationException("The selected COM port changed. Review the board and start the update again.");
+            if (package.IsDue) dueTool = dueProvider.FindExisting();
+            else tool = provider.FindExisting();
         }
         catch (Exception exception) when (
-            exception is IOException or InvalidDataException or UnauthorizedAccessException)
+            exception is IOException or InvalidDataException or InvalidOperationException or UnauthorizedAccessException)
         {
             MessageBox.Show(
                 this, exception.Message, "Controller Firmware", MessageBoxButtons.OK,
@@ -437,28 +445,15 @@ public sealed class MainForm : Form
             return;
         }
 
-        var portName = (string)portSelector.SelectedItem!;
-        var identity = client.CurrentControllerIdentity;
-        if (identity is not null &&
-            (!string.Equals(identity.Product, ControllerFirmwarePackage.ProductName, StringComparison.Ordinal) ||
-             !string.Equals(identity.Mcu, "MEGA2560", StringComparison.Ordinal)))
-        {
-            MessageBox.Show(
-                this,
-                $"The selected controller identifies itself as {identity.Product} on {identity.Mcu}, " +
-                "not DragMC on a Mega 2560.",
-                "Controller Firmware",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Error);
-            return;
-        }
-
         var identityText = identity is null
             ? "DragWin cannot identify the selected board. Continue only after physically confirming " +
-              "that it is an Arduino Mega 2560 or compatible clone with a working bootloader."
+              $"that it is {package.Manifest.BoardDisplayName} on this COM port."
             : $"Connected controller: {identity.Product} {identity.FirmwareVersion}, " +
               $"protocol {identity.ProtocolVersion}, {identity.Mcu}.";
-        var toolText = tool is null
+        var toolText = package.IsDue
+            ? dueTool is null ? "DragWin will download and verify the official Arduino bossac uploader before releasing the COM port."
+                : $"Uploader: bossac {dueTool.Version} from {dueTool.Source}."
+            : tool is null
             ? "DragWin will download and verify the official Arduino avrdude uploader before releasing the COM port."
             : $"Uploader: avrdude {tool.Version} from {tool.Source}.";
         var confirmation =
@@ -466,6 +461,9 @@ public sealed class MainForm : Form
             $"{package.Manifest.BoardDisplayName} on {portName}?{Environment.NewLine}{Environment.NewLine}" +
             identityText + Environment.NewLine + Environment.NewLine +
             toolText + Environment.NewLine + Environment.NewLine +
+            (package.IsDue ? "Due: use the Programming USB connector nearest the round power jack, NOT Native USB. " +
+                "Entering the bootloader erases the current sketch; an interrupted update may require another upload. " +
+                Environment.NewLine + Environment.NewLine : "") +
             "Controller outputs will be unavailable during the update. Do not disconnect USB or close DragWin. " +
             "This updater cannot repair a missing or damaged bootloader.";
         if (MessageBox.Show(
@@ -494,33 +492,43 @@ public sealed class MainForm : Form
             var progress = progressForm.CreateProgress();
             progress.Report($"Package: {Path.GetFileName(package.PackagePath)}");
             progress.Report($"Image SHA-256: {package.Manifest.Sha256}");
-            if (tool is null)
+            if (package.IsDue && dueTool is null)
+            {
+                progressForm.SetStatus("Downloading Arduino SAM uploader...");
+                dueTool = await dueProvider.DownloadOfficialAsync(progress);
+            }
+            else if (!package.IsDue && tool is null)
             {
                 progressForm.SetStatus("Downloading Arduino uploader...");
                 tool = await provider.DownloadOfficialAsync(progress);
             }
 
             progressForm.SetStatus("Releasing controller serial port...");
+            if (portSelector.SelectedItem as string != portName)
+                throw new InvalidOperationException("The selected COM port changed. No firmware was written.");
+            FirmwareUpdatePolicy.CheckTarget(package, client.CurrentControllerIdentity);
             client.Disconnect();
             SetConnectedState(false);
             serialReleased = true;
             await Task.Delay(500);
 
             progressForm.SetStatus("Writing and verifying controller firmware...");
-            var flasher = new ArduinoMegaFirmwareFlasher(tool);
+            IControllerFirmwareFlasher flasher = package.IsDue
+                ? new ArduinoDueFirmwareFlasher(dueTool!) : new ArduinoMegaFirmwareFlasher(tool!);
             await flasher.FlashAsync(package, portName, progress);
             uploadSucceeded = true;
 
             progressForm.SetStatus("Firmware written; waiting for DragMC identity...");
             verified = await ReconnectAndVerifyFirmwareAsync(
                 portName,
-                package.Manifest.FirmwareVersion,
+                package,
                 progress);
         }
         catch (Exception exception) when (
             exception is IOException or InvalidDataException or InvalidOperationException or
                 UnauthorizedAccessException or HttpRequestException or
-                System.Security.Cryptography.CryptographicException or TimeoutException)
+                System.Security.Cryptography.CryptographicException or TimeoutException or
+                System.ComponentModel.Win32Exception or OperationCanceledException)
         {
             failure = exception;
         }
@@ -565,7 +573,7 @@ public sealed class MainForm : Form
                 : $"Received {received.Product} {received.FirmwareVersion} on {received.Mcu}.";
             MessageBox.Show(
                 this,
-                "The firmware was written and verified by avrdude, but DragWin did not receive the " +
+                "The firmware was written and verified by the uploader, but DragWin did not receive the " +
                 $"expected DragMC identity within 20 seconds. {detail}",
                 "Controller Firmware Written",
                 MessageBoxButtons.OK,
@@ -606,7 +614,7 @@ public sealed class MainForm : Form
         }
         if (portSelector.SelectedItem is not string)
         {
-            reason = "Select the Mega's COM port before updating controller firmware.";
+            reason = "Select the controller's COM port before updating firmware.";
             return false;
         }
 
@@ -616,7 +624,7 @@ public sealed class MainForm : Form
 
     private async Task<bool> ReconnectAndVerifyFirmwareAsync(
         string portName,
-        string expectedVersion,
+        ControllerFirmwarePackage package,
         IProgress<string> progress)
     {
         var deadline = DateTimeOffset.Now.AddSeconds(20);
@@ -649,7 +657,7 @@ public sealed class MainForm : Form
                 progress.Report($"Identity request failed: {exception.Message}");
             }
             await Task.Delay(350);
-            if (client.CurrentControllerIdentity?.IsExpectedDragMc(expectedVersion) == true)
+            if (FirmwareUpdatePolicy.VerifyIdentity(package, client.CurrentControllerIdentity))
             {
                 return true;
             }
@@ -1315,7 +1323,7 @@ public sealed class MainForm : Form
 
         if (persistedSettings.ManualTreeStart && !StarterButtonSession.Supported(client.CurrentControllerIdentity))
         {
-            MessageBox.Show(this, "Starter Button mode requires DragMC 0.6.6 or newer (protocol 9). Update the controller first.", Text);
+            MessageBox.Show(this, StarterButtonSession.FirmwareRequirement, Text);
             return;
         }
 
@@ -1403,7 +1411,10 @@ public sealed class MainForm : Form
             persistedSettings.VoiceAnnouncementsEnabled,
             persistedSettings.SpeechVoiceName,
             persistedSettings.SpeechBackend);
-        passResultsForm.BeginPass(lanes, persistedSettings.IntervalTimerLanes, simulated);
+        passResultsForm.BeginPass(lanes, persistedSettings.IntervalTimerLanes, simulated,
+            modeSelector.SelectedItem as string == "BRACKET"
+                ? lanes.ToDictionary(lane => lane, lane => decimal.ToInt32(dialInputs[lane - 1].Value * 1000M))
+                : null);
         UpdatePracticeStartButton();
         return passResultsForm;
     }
@@ -1572,7 +1583,7 @@ public sealed class MainForm : Form
         {
             if (dialog.ManualTreeStart && !StarterButtonSession.Supported(client.CurrentControllerIdentity))
             {
-                MessageBox.Show(this, "Starter Button mode requires DragMC 0.6.6 or newer (protocol 9). Update the controller before arming a run.", Text);
+                MessageBox.Show(this, StarterButtonSession.FirmwareRequirement, Text);
                 return;
             }
             ApplyRaceSettings();
@@ -1709,15 +1720,17 @@ public sealed class MainForm : Form
         {
             MessageBox.Show(
                 this,
-                "Connect to the Mega before opening the sensor test.",
+                "Connect to the controller before opening the sensor test.",
                 "Sensor Test",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information);
             return;
         }
 
-        using var form = new SensorTestForm(client);
+        using var form = new SensorTestForm(client, persistedSettings.SensorTestLanes);
         form.ShowDialog(this);
+        persistedSettings.SensorTestLanes = form.SelectedLanes;
+        SaveCurrentSettings();
     }
 
     private void ShowLightTreeTest()
@@ -2028,6 +2041,7 @@ public sealed class MainForm : Form
                 .Select(item => item.lane)
                 .ToArray(),
             IntervalTimerLanes = persistedSettings.IntervalTimerLanes.ToArray(),
+            SensorTestLanes = persistedSettings.SensorTestLanes.ToArray(),
             VoiceAnnouncementsEnabled = persistedSettings.VoiceAnnouncementsEnabled,
             SpeechVoiceName = persistedSettings.SpeechVoiceName,
             SpeechBackend = persistedSettings.SpeechBackend,

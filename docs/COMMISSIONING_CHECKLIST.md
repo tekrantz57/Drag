@@ -104,9 +104,14 @@ test; Generate demo practice run does not validate any sensor.
 - [ ] Check RT, ET, and speed for consistency; compare with independent timing
       where available. A completed pass alone does not prove measurement accuracy.
 
-The firmware requires a stable 2 ms transition for race acceptance. A shorter
-raw pulse may appear in diagnostics but be rejected by race timing. Stop and
-record misses or marginal pulses; do not change debounce blindly.
+Firmware 0.6.7 captures speed-trap and finish on their first sampled raw blocked
+edge. Staging and interval inputs still require 2 ms qualification; earlier
+firmware also applied it to speed-trap and finish. Stop and record missing edges.
+Before a test, reset counts; afterward, use Read Scan Timing to record the largest
+scan-start gap and scan duration. A pulse can still fall entirely between scans.
+Restore normal A2/A3 wiring after any signal-swap diagnostic, before timed passes.
+
+Maximum scan-start gap (us): __________  Maximum scan duration (us): __________
 
 | Lane | Trap distance (in) | Passes attempted / completed | Shortest trap pulse (us) | Shortest finish pulse (us) | Legal / foul checked |
 | --- | --- | --- | --- | --- | --- |

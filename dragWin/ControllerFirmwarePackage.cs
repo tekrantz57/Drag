@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Buffers.Binary;
 
 namespace DragWin;
 
@@ -27,6 +28,8 @@ public sealed class ControllerFirmwarePackage
     public const string PackageExtension = ".dragfw";
     public const string ProductName = "DRAG_MC";
     public const string MegaBoardProfile = "ARDUINO_MEGA_2560";
+    public const string DueBoardProfile = "ARDUINO_DUE_PROGRAMMING";
+    public bool IsDue => Manifest.BoardProfile == DueBoardProfile;
     private const int MaximumManifestBytes = 64 * 1024;
     private const int MaximumImageBytes = 2 * 1024 * 1024;
 
@@ -58,7 +61,7 @@ public sealed class ControllerFirmwarePackage
             archive.Entries.Any(entry => string.IsNullOrEmpty(entry.Name)))
         {
             throw new InvalidDataException(
-                "A DragMC firmware package must contain only manifest.json and one HEX image.");
+                "A DragMC firmware package must contain only manifest.json and one firmware image.");
         }
 
         var manifestEntry = archive.GetEntry("manifest.json") ??
@@ -69,12 +72,17 @@ public sealed class ControllerFirmwarePackage
         }
 
         ControllerFirmwareManifest manifest;
-        using (var manifestStream = manifestEntry.Open())
+        try
         {
+            using var manifestStream = manifestEntry.Open();
             manifest = JsonSerializer.Deserialize<ControllerFirmwareManifest>(
                 manifestStream,
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ??
                 throw new InvalidDataException("The firmware manifest is empty.");
+        }
+        catch (JsonException exception)
+        {
+            throw new InvalidDataException("The firmware manifest is not valid JSON.", exception);
         }
         ValidateManifest(manifest);
 
@@ -100,7 +108,8 @@ public sealed class ControllerFirmwarePackage
         {
             throw new InvalidDataException("The firmware image SHA-256 does not match its manifest.");
         }
-        ValidateIntelHex(imageBytes);
+        if (manifest.BoardProfile == DueBoardProfile) ValidateDueBinary(imageBytes);
+        else ValidateIntelHex(imageBytes);
         return new ControllerFirmwarePackage(fullPath, manifest, imageBytes);
     }
 
@@ -188,6 +197,18 @@ public sealed class ControllerFirmwarePackage
         }
     }
 
+    public static void ValidateDueBinary(byte[] imageBytes)
+    {
+        ArgumentNullException.ThrowIfNull(imageBytes);
+        if (imageBytes.Length < 8 || imageBytes.Length > 512 * 1024)
+            throw new InvalidDataException("Due firmware must be a nonempty application BIN image within 512 KB.");
+        var stack = BinaryPrimitives.ReadUInt32LittleEndian(imageBytes.AsSpan(0, 4));
+        var reset = BinaryPrimitives.ReadUInt32LittleEndian(imageBytes.AsSpan(4, 4));
+        if (stack < 0x20070000 || stack > 0x20088000 || stack % 8 != 0 ||
+            (reset & 1) == 0 || (reset & ~1U) < 0x80000 || (reset & ~1U) >= 0x80000 + imageBytes.Length)
+            throw new InvalidDataException("The Due image has an invalid SAM3X8E stack/reset vector.");
+    }
+
     private static void ValidateManifest(ControllerFirmwareManifest manifest)
     {
         if (manifest.FormatVersion != CurrentFormatVersion)
@@ -195,17 +216,18 @@ public sealed class ControllerFirmwarePackage
             throw new InvalidDataException(
                 $"Unsupported firmware package format {manifest.FormatVersion}.");
         }
-        if (!string.Equals(manifest.Product, ProductName, StringComparison.Ordinal) ||
-            !string.Equals(manifest.BoardProfile, MegaBoardProfile, StringComparison.Ordinal) ||
-            !string.Equals(manifest.BoardDisplayName, "Arduino Mega 2560", StringComparison.Ordinal) ||
-            !string.Equals(manifest.Mcu, "atmega2560", StringComparison.Ordinal) ||
-            !string.Equals(manifest.UploaderBackend, "avrdude", StringComparison.Ordinal) ||
-            !string.Equals(manifest.ArduinoFqbn, "arduino:avr:mega:cpu=atmega2560", StringComparison.Ordinal) ||
-            !string.Equals(manifest.UploadProtocol, "wiring", StringComparison.Ordinal) ||
-            manifest.UploadBaud != 115200)
+        var mega = manifest.Product == ProductName && manifest.BoardProfile == MegaBoardProfile &&
+            manifest.BoardDisplayName == "Arduino Mega 2560" && manifest.Mcu == "atmega2560" &&
+            manifest.UploaderBackend == "avrdude" && manifest.ArduinoFqbn == "arduino:avr:mega:cpu=atmega2560" &&
+            manifest.UploadProtocol == "wiring" && manifest.UploadBaud == 115200;
+        var due = manifest.Product == "DRAG_MC_DUE" && manifest.BoardProfile == DueBoardProfile &&
+            manifest.BoardDisplayName == "Arduino Due (Programming Port)" && manifest.Mcu == "sam3x8e" &&
+            manifest.UploaderBackend == "bossac" && manifest.ArduinoFqbn == "arduino:sam:arduino_due_x_dbg" &&
+            manifest.UploadProtocol == "sam-ba" && manifest.UploadBaud == 1200;
+        if (!mega && !due)
         {
             throw new InvalidDataException(
-                "The firmware package is not for the supported DragMC Mega 2560 profile.");
+                "The firmware package does not match a supported Mega or Due Programming Port profile.");
         }
         if (string.IsNullOrWhiteSpace(manifest.FirmwareVersion) ||
             string.IsNullOrWhiteSpace(manifest.BoardDisplayName) ||
@@ -215,7 +237,8 @@ public sealed class ControllerFirmwarePackage
         }
         if (string.IsNullOrWhiteSpace(manifest.ImageFile) ||
             Path.GetFileName(manifest.ImageFile) != manifest.ImageFile ||
-            !manifest.ImageFile.EndsWith(".hex", StringComparison.OrdinalIgnoreCase))
+            manifest.ImageFile.Contains('\\') || manifest.ImageFile.Contains('/') || manifest.ImageFile.Contains(':') ||
+            !manifest.ImageFile.EndsWith(due ? ".bin" : ".hex", StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidDataException("The firmware manifest contains an invalid image filename.");
         }

@@ -102,6 +102,9 @@ public sealed class TournamentRunnerForm : Form
     };
     private readonly Button rerunButton = new() { Text = "Re-run Heat", AutoSize = true, Visible = false };
     private readonly Button historyButton = new() { Text = "Race History", AutoSize = true };
+    private readonly ToolStripMenuItem finishMenuItem = new("Last Heat Results") { Enabled = false };
+    private PassFinishResult? finishResult;
+    private PassFinishForm? finishForm;
     private readonly Button repeatLineupButton = new() { Text = "Repeat Lineup", AutoSize = true };
     private readonly SplitContainer detailsSplit = new()
     {
@@ -230,6 +233,8 @@ public sealed class TournamentRunnerForm : Form
         confirmButton.Click += (_, _) => ConfirmHeat();
         rerunButton.Click += (_, _) => PrepareRerun();
         historyButton.Click += (_, _) => ShowHistory();
+        finishMenuItem.Click += (_, _) => ShowFinish();
+        Disposed += (_, _) => finishForm?.Dispose();
         repeatLineupButton.Click += (_, _) => RepeatCurrentAnnouncement();
         repeatLineupButton.Visible = voiceAnnouncementsEnabled;
         lanesGrid.DataError += LanesGridOnDataError;
@@ -248,6 +253,9 @@ public sealed class TournamentRunnerForm : Form
         demoMenuItem.Click += (_, _) => RunRunnerButtonAction(sendHeatButton, DemoHeat);
         testMenu.DropDownItems.Add(demoMenuItem);
         menu.Items.Add(testMenu);
+        var viewMenu = new ToolStripMenuItem("View");
+        viewMenu.DropDownItems.Add(finishMenuItem);
+        menu.Items.Add(viewMenu);
 
         var showRawCheck = new CheckBox { Text = "Show raw protocol", AutoSize = true, Dock = DockStyle.Right };
         showRawCheck.CheckedChanged += (_, _) => detailsSplit.Panel2Collapsed = !showRawCheck.Checked;
@@ -653,7 +661,7 @@ public sealed class TournamentRunnerForm : Form
     {
         if (manualTreeStart && !StarterButtonSession.Supported(client.CurrentControllerIdentity))
         {
-            MessageBox.Show(this, "Starter Button mode requires DragMC 0.6.6 or newer (protocol 9). Update the controller first.", Text);
+            MessageBox.Show(this, StarterButtonSession.FirmwareRequirement, Text);
             return false;
         }
         if (!client.IsConnected)
@@ -690,6 +698,7 @@ public sealed class TournamentRunnerForm : Form
         starter.Arm(manualTreeStart);
         currentHeatSimulated = false;
         client.SendBatch(commands);
+        ClearFinish();
         heatArmed = true;
         AddTimeline("Heat armed. Stage only the displayed lanes.");
         Speak(RaceAnnouncementText.HeatArmed(heat.Entries.Select(entry => entry.LaneNumber)));
@@ -716,6 +725,7 @@ public sealed class TournamentRunnerForm : Form
         var assignments = ReadAssignments();
         if (assignments is null || !ApplyHeatGridInputs(assignments)) return false;
 
+        ClearFinish();
         AddTimeline("TEST: Simulated heat results generated.");
         currentHeatSimulated = true;
         sendHeatButton.Enabled = false;
@@ -1103,6 +1113,18 @@ public sealed class TournamentRunnerForm : Form
             : $"Confirm {advancing.Length} Advancers";
         confirmButton.Enabled = true;
         UpdateStatusCells();
+        finishResult = new PassFinishResult($"{tournament.Name} | Round {round.RoundNumber} | Heat {heat.HeatNumber}",
+            currentHeatSimulated, heat.Entries.OrderBy(entry => entry.LaneNumber).Select(entry =>
+            {
+                var value = liveResults[entry.LaneNumber];
+                return new FinishLaneResult(entry.LaneNumber, entry.Car.RacerName, entry.Car.Name,
+                    FormatResult(value), value.ReactionUs, value.ElapsedUs, value.SpeedMphX100,
+                    entry.DialMilliseconds, value.SplitSensorsEnabled, value.Split1Us, value.Split2Us,
+                    value.Winner, resultAdvancerIds.Contains(entry.Car.Id), value.Fouled,
+                    value.BreakoutUs.HasValue, value.DidNotFinish, entry.IsBye, value.SpeedInvalid);
+            }).ToArray());
+        finishMenuItem.Enabled = true;
+        if (Visible) ShowFinish();
         if (!resultsAnnounced)
         {
             resultsAnnounced = true;
@@ -1111,6 +1133,22 @@ public sealed class TournamentRunnerForm : Form
                     .Where(entry => resultAdvancerIds.Contains(entry.Car.Id))
                     .Select(entry => entry.Car)));
         }
+    }
+
+    private void ShowFinish()
+    {
+        if (finishResult is null) return;
+        if (finishForm is null || finishForm.IsDisposed)
+            finishForm = new PassFinishForm(finishResult);
+        if (!finishForm.Visible) finishForm.Show(this);
+        finishForm.BringToFront();
+    }
+
+    private void ClearFinish()
+    {
+        finishForm?.Close();
+        finishResult = null;
+        finishMenuItem.Enabled = false;
     }
 
     private void PrepareRerun()
@@ -1127,6 +1165,7 @@ public sealed class TournamentRunnerForm : Form
         }
 
         liveResults.Clear();
+        ClearFinish();
         heatArmed = false;
         resultAdvancerIds.Clear();
         foreach (var entry in heat.Entries)

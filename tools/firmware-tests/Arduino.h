@@ -23,12 +23,29 @@ constexpr uint8_t A4 = 58, A5 = 59, A6 = 60, A7 = 61;
 constexpr uint8_t A8 = 62, A9 = 63, A10 = 64, A11 = 65;
 constexpr uint8_t A12 = 66, A13 = 67, A14 = 68, A15 = 69;
 inline unsigned long testTimeMs = 0;
+inline unsigned long testSubmillisUs = 0;
 inline unsigned long millis() { return testTimeMs; }
-inline unsigned long micros() { return testTimeMs * 1000UL; }
+inline unsigned long micros() { return testTimeMs * 1000UL + testSubmillisUs; }
 inline void pinMode(uint8_t, int) {}
 inline void digitalWrite(uint8_t, int) {}
 inline int testPinLevels[256] = {};
-inline int digitalRead(uint8_t pin) { return testPinLevels[pin]; }
+inline unsigned long testReadCostUs = 0;
+inline int digitalRead(uint8_t pin) {
+  testSubmillisUs += testReadCostUs;
+  return testPinLevels[pin];
+}
+
+#ifdef DRAG_TEST_DUE
+constexpr int CHANGE = 3;
+inline uint32_t testInterruptMask = 0;
+inline void (*testInterruptCallbacks[66])() = {};
+inline uint32_t __get_PRIMASK() { return testInterruptMask; }
+inline void __disable_irq() { testInterruptMask = 1; }
+inline void __set_PRIMASK(uint32_t value) { testInterruptMask = value; }
+inline int digitalPinToInterrupt(uint8_t pin) { return pin; }
+inline void attachInterrupt(int pin, void (*callback)(), int) { testInterruptCallbacks[pin] = callback; }
+inline void detachInterrupt(int pin) { testInterruptCallbacks[pin] = nullptr; }
+#endif
 
 struct TestSerial {
   std::string output;

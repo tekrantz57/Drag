@@ -16,6 +16,7 @@ public sealed class AppSettings
     public decimal[] DialSeconds { get; set; } = [10.000M, 10.000M, 10.000M, 10.000M];
     public int[] PracticeLanes { get; set; } = [1, 2, 3, 4];
     public int[] IntervalTimerLanes { get; set; } = [];
+    public int[] SensorTestLanes { get; set; } = [1];
     public bool VoiceAnnouncementsEnabled { get; set; }
     public string SpeechVoiceName { get; set; } = "";
     public SpeechBackendMode SpeechBackend { get; set; } = SpeechBackendMode.Automatic;
@@ -100,6 +101,8 @@ public static class AppSettingsStore
             .Distinct()
             .Order()
             .ToArray();
+        settings.SensorTestLanes = (settings.SensorTestLanes ?? [1])
+            .Where(lane => lane is >= 1 and <= 4).Distinct().Order().ToArray();
         settings.SpeechVoiceName = settings.SpeechVoiceName?.Trim() ?? "";
         if (!Enum.IsDefined(settings.SpeechBackend))
         {

@@ -4,6 +4,10 @@ This diagnostic-only sketch lets DragWin operate the existing four-lane Light
 Tree Test on an Arduino Due. It is not race firmware and has no sensor, staging,
 timing, result, or tournament behavior.
 
+For the newer experimental Due race/ISR build of the shared `dragMC` sketch,
+see [Due Race Firmware](../docs/DUE_PORT.md). This light-only sketch remains
+available for isolated output testing.
+
 ## Upload
 
 1. Install **Arduino SAM Boards (32-bit ARM Cortex-M3)** in Arduino IDE Boards
@@ -15,10 +19,12 @@ timing, result, or tournament behavior.
 5. In DragWin, connect to the resulting COM port.
 6. Open **Diagnostics > Light tree test...**.
 
-Do not use DragWin's **Update Controller Firmware** command with the Due. That
-updater and its bundled firmware package are specifically for the Mega 2560.
 The diagnostic sketch identifies itself as `DRAG_MC_DUE_LIGHT_TEST` on
-`SAM3X8E`, allowing DragWin to reject a mistaken Mega update attempt.
+`SAM3X8E`. Current DragWin can migrate it to the experimental Due **race**
+firmware with **File > Update Controller Firmware** through the Programming
+port; this replaces the light-only sketch. Mega packages remain incompatible.
+Older DragWin builds have a Mega-only updater. To retain/upload this diagnostic
+sketch, continue using Arduino IDE as described above.
 
 ## Light Pins
 

@@ -45,10 +45,14 @@
       <_DragMcVersionHeader>$([System.IO.File]::ReadAllText('$(MSBuildProjectDirectory)\..\dragMC\FirmwareVersion.h'))</_DragMcVersionHeader>
       <_DragMcFirmwareVersion>$([System.Text.RegularExpressions.Regex]::Match('$(_DragMcVersionHeader)', 'DRAGMC_FIRMWARE_VERSION\s+&quot;([^&quot;]+)&quot;').Groups[1].Value)</_DragMcFirmwareVersion>
       <_ExpectedFirmwarePackage>$(MSBuildProjectDirectory)\..\dragMC\dist\DragMC-mega-$(_DragMcFirmwareVersion).dragfw</_ExpectedFirmwarePackage>
+      <_DueFirmwareVersion>$([System.Text.RegularExpressions.Regex]::Match('$(_DragMcVersionHeader)', 'DRAGMC_DUE_FIRMWARE_VERSION\s+&quot;([^&quot;]+)&quot;').Groups[1].Value)</_DueFirmwareVersion>
+      <_ExpectedDuePackage>$(MSBuildProjectDirectory)\..\dragMC\dist\DragMC-due-$(_DueFirmwareVersion).dragfw</_ExpectedDuePackage>
     </PropertyGroup>
     <Error
       Condition="!Exists('$(_ExpectedFirmwarePackage)')"
       Text="Build DragMC $(_DragMcFirmwareVersion) with tools\Build-ControllerFirmware.ps1 before publishing DragWin." />
+    <Error Condition="!Exists('$(_ExpectedDuePackage)')"
+      Text="Build Due $(_DueFirmwareVersion) with tools\Build-ControllerFirmware.ps1 -Board Due before publishing DragWin." />
   </Target>
 
   <Target Name="AddGitBuildDescription" BeforeTargets="GetAssemblyAttributes">

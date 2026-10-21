@@ -32,8 +32,18 @@ occur in race order: staging, launch, speed trap, then finish. In
 manual-testing alternative that latches pre-stage before stage.
 
 Use Sensor Test to inspect each input's raw blocked-edge count and most recent
-blocked-pulse duration. A pulse shorter than the firmware's 2 ms debounce is
-recorded diagnostically but is not accepted as a race transition.
+blocked-pulse duration. Firmware 0.6.6 and earlier require 2 ms qualification
+for speed-trap and finish, which rejected short pulses during venue testing.
+Current source firmware 0.6.7 captures their first sampled blocked edges and
+latches each race timestamp once. Staging and interval inputs remain debounced.
+
+In Sensor Test, reset counts before a test, note edge-count increments and pulse
+widths, then click Read Scan Timing afterward (protocol 10+). The requested
+maximum scan-start gap and scan duration help assess polling; they do not prove
+that an electrical pulse was produced or guarantee that every pulse was sampled.
+If no raw edge is captured, investigate optical/electrical output versus polling
+with a scope or logic analyzer. Restore normal A2/A3 wiring before timed passes
+if the inputs were swapped for diagnosis.
 
 ## Tree Lights Stay On Or Off During Light Test
 

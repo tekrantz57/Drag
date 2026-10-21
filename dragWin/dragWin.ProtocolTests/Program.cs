@@ -74,6 +74,7 @@ try
         DialSeconds = [7.1M, 7.2M, 7.3M, 7.4M],
         PracticeLanes = [1, 4],
         IntervalTimerLanes = [1, 4],
+        SensorTestLanes = [4, 1, 4, 99],
         VoiceAnnouncementsEnabled = true,
         SpeechVoiceName = "Test Voice",
         SpeechBackend = SpeechBackendMode.LinuxHelper,
@@ -89,6 +90,7 @@ try
     AssertEqual(7.4M, loadedSettings.DialSeconds[3]);
     AssertEqual(4, loadedSettings.PracticeLanes[1]);
     AssertEqual(4, loadedSettings.IntervalTimerLanes[1]);
+    Assert(loadedSettings.SensorTestLanes.SequenceEqual([1, 4]), "Sensor Test scope was not normalized/persisted.");
     AssertEqual(true, loadedSettings.VoiceAnnouncementsEnabled);
     AssertEqual("Test Voice", loadedSettings.SpeechVoiceName);
     AssertEqual(SpeechBackendMode.LinuxHelper, loadedSettings.SpeechBackend);
@@ -263,12 +265,12 @@ AssertEqual("DRAG_MC_DUE_LIGHT_TEST", dueLightTestIdentity!.Product);
 AssertEqual(8, dueLightTestIdentity.ProtocolVersion);
 AssertEqual("SAM3X8E", dueLightTestIdentity.Mcu);
 Assert(!dueLightTestIdentity.IsExpectedDragMc("0.6.4"),
-    "The Mega firmware updater must reject the Due diagnostic identity.");
+    "The legacy Mega identity predicate must not accept a Due diagnostic identity.");
 
 var firmwarePackagePath = FindRepositoryFile(
-    Path.Combine("dragMC", "dist", "DragMC-mega-0.6.6.dragfw"));
+    Path.Combine("dragMC", "dist", "DragMC-mega-0.6.8.dragfw"));
 var firmwarePackage = ControllerFirmwarePackage.Load(firmwarePackagePath);
-AssertEqual("0.6.6", firmwarePackage.Manifest.FirmwareVersion);
+AssertEqual("0.6.8", firmwarePackage.Manifest.FirmwareVersion);
 AssertEqual("ARDUINO_MEGA_2560", firmwarePackage.Manifest.BoardProfile);
 AssertEqual("atmega2560", firmwarePackage.Manifest.Mcu);
 var packageHash = Convert.ToHexString(SHA256.HashData(firmwarePackage.ImageBytes));
@@ -722,6 +724,7 @@ finally
     }
 }
 
+await FirmwareUpdateTests.Run(firmwarePackagePath);
 RegressionTests.Run();
 Console.WriteLine("Protocol and regression tests passed.");
 

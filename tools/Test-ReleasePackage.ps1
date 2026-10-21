@@ -32,6 +32,12 @@ try {
     if ($privateFiles.Count) { throw 'Archive contains private or development files.' }
     $reader = [IO.StreamReader]::new($zip.GetEntry("$root/BUILD_INFO.json").Open())
     try { $metadata = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
+    if ($metadata.controllerFirmware -and !$zip.GetEntry("$root/Firmware/DragMC-mega-$($metadata.controllerFirmware).dragfw")) {
+        throw 'Missing matching Mega firmware package.'
+    }
+    if ($metadata.dueControllerFirmware -and !$zip.GetEntry("$root/Firmware/DragMC-due-$($metadata.dueControllerFirmware).dragfw")) {
+        throw 'Missing matching Due firmware package.'
+    }
     $stream = $zip.GetEntry("$root/dragWin.exe").Open()
     $memory = [IO.MemoryStream]::new()
     try { $stream.CopyTo($memory); $bytes = $memory.ToArray() }

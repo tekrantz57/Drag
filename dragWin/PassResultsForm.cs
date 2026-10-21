@@ -35,6 +35,10 @@ public sealed class PassResultsForm : Form
         Enabled = false
     };
     private bool currentPassSimulated;
+    private readonly Button finishButton = new() { Text = "Last Pass", AutoSize = true, Enabled = false };
+    private PassFinishResult? finishResult;
+    private PassFinishForm? finishForm;
+    private IReadOnlyDictionary<int, int>? passDials;
     public event EventHandler? StartTreeRequested;
     private bool voiceAnnouncementsEnabled;
     private string speechVoiceName;
@@ -76,6 +80,8 @@ public sealed class PassResultsForm : Form
         var closeButton = new Button { Text = "Close", AutoSize = true, MinimumSize = new Size(80, 28) };
         clearButton.Click += (_, _) => ClearResults();
         closeButton.Click += (_, _) => Close();
+        finishButton.Click += (_, _) => ShowFinish();
+        Disposed += (_, _) => finishForm?.Dispose();
         UiStyles.ConfigurePrimaryButton(startTreeButton, UiStyles.GreenAction);
         startTreeButton.Click += (_, _) =>
         {
@@ -105,15 +111,17 @@ public sealed class PassResultsForm : Form
         {
             Dock = DockStyle.Fill,
             AutoSize = true,
-            ColumnCount = 3,
+            ColumnCount = 4,
             Padding = new Padding(0, 8, 0, 0)
         };
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         footer.Controls.Add(clearButton, 0, 0);
-        footer.Controls.Add(startTreeButton, 1, 0);
-        footer.Controls.Add(closeButton, 2, 0);
+        footer.Controls.Add(finishButton, 1, 0);
+        footer.Controls.Add(startTreeButton, 2, 0);
+        footer.Controls.Add(closeButton, 3, 0);
 
         var layout = new TableLayoutPanel
         {
@@ -138,7 +146,8 @@ public sealed class PassResultsForm : Form
     public void BeginPass(
         IReadOnlyCollection<int> lanes,
         IReadOnlyCollection<int> splitSensorLanes,
-        bool simulated = false)
+        bool simulated = false,
+        IReadOnlyDictionary<int, int>? dialMilliseconds = null)
     {
         ArgumentNullException.ThrowIfNull(lanes);
         if (lanes.Count == 0)
@@ -147,6 +156,10 @@ public sealed class PassResultsForm : Form
         }
 
         MarkIncompleteRows();
+        finishForm?.Close();
+        finishResult = null;
+        finishButton.Enabled = false;
+        passDials = dialMilliseconds?.ToDictionary(pair => pair.Key, pair => pair.Value);
         currentPassSimulated = simulated;
         startTreeButton.Enabled = false;
         currentResults.Clear();
@@ -323,12 +336,31 @@ public sealed class PassResultsForm : Form
         }
 
         if (message.Type == "EVENT" && message.Parts.Count >= 3 &&
-            message.Parts[1] == "TREE" && message.Parts[2] == "RACE_COMPLETE")
+            message.Parts[1] == "TREE" && message.Parts[2] == "RACE_COMPLETE" && currentResults.Count > 0)
         {
             foreach (var laneResult in currentResults.Values)
             {
                 laneResult.Complete = true;
                 UpdateRow(laneResult);
+            }
+            if (finishResult is null)
+            {
+                finishResult = new PassFinishResult($"Practice - Pass {passNumber}", currentPassSimulated,
+                    currentResults.OrderBy(item => item.Key).Select(item =>
+                    {
+                        var value = item.Value;
+                        var outcome = (value.Winner ? "Winner / " : "") + value.Row.Cells["Outcome"].Value;
+                        if (value.Winner && !value.Fouled && !value.BreakoutUs.HasValue && !value.DidNotFinish)
+                            outcome = "Winner";
+                        return new FinishLaneResult(item.Key, "", "", outcome, value.ReactionUs,
+                            value.ElapsedUs, value.SpeedMphX100,
+                            passDials is not null && passDials.TryGetValue(item.Key, out var dial) ? dial : null,
+                            value.SplitSensorsEnabled, value.Split1Us, value.Split2Us,
+                            value.Winner, RedLight: value.Fouled, Breakout: value.BreakoutUs.HasValue,
+                            DidNotFinish: value.DidNotFinish, SpeedInvalid: value.SpeedInvalid);
+                    }).ToArray());
+                finishButton.Enabled = true;
+                if (Visible) ShowFinish();
             }
             if (!passResultAnnounced)
             {
@@ -432,12 +464,24 @@ public sealed class PassResultsForm : Form
 
     private void ClearResults()
     {
+        finishForm?.Close();
+        finishResult = null;
+        finishButton.Enabled = false;
         currentResults.Clear();
         resultsGrid.Rows.Clear();
         passNumber = 0;
         startTreeButton.Visible = false;
         startTreeButton.Enabled = false;
         sessionSummary.Text = "No passes armed";
+    }
+
+    private void ShowFinish()
+    {
+        if (finishResult is null) return;
+        if (finishForm is null || finishForm.IsDisposed)
+            finishForm = new PassFinishForm(finishResult);
+        if (!finishForm.Visible) finishForm.Show(this);
+        finishForm.BringToFront();
     }
 
     private sealed class PassLaneResult(DataGridViewRow row)

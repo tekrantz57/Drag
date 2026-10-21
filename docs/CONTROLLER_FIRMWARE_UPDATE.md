@@ -1,29 +1,45 @@
 # Controller Firmware Updates
 
-DragWin can install its bundled DragMC application firmware on an Arduino Mega
-2560 through the board's normal USB serial bootloader.
+DragWin can install bundled DragMC application firmware on a Mega 2560 or an
+Arduino Due using its **Programming USB port only**. Each board has its own
+validated package and uploader. On October 20, 2026, the operator successfully
+flashed both the Due and an Elegoo Mega through DragWin on native Windows.
+Due updater support is current-source work, not included in beta.2 downloads;
+Due/bossac Wine qualification and deliberate failure/recovery tests remain pending.
 
 ## Operator Workflow
 
-1. Connect the Mega by USB and select its COM port in DragWin.
+1. Connect the controller by USB and select its COM port in DragWin. For Due,
+   use the connector nearest the round power jack, not Native USB. The current
+   bench PC uses COM21 for Due Programming and COM26 for the Elegoo Mega;
+   COM24 is the Due Native connector. Port numbers are machine-specific.
 2. Close Practice Pass Results. Tournament and Sensor Test windows must also
    be closed before returning to the main window.
 3. Choose **File > Update Controller Firmware...**.
 4. Verify the displayed board, DragMC version, and COM port.
-5. If DragWin cannot identify the existing sketch, physically confirm that the
-   selected port belongs to a Mega 2560 or compatible clone before continuing.
+5. If DragWin cannot identify the existing sketch, explicitly choose the board
+   type and physically confirm it is on the selected port. Nothing is selected
+   by default. A known incompatible identity is rejected instead of overridden.
 6. Keep USB connected while DragWin writes, verifies, reconnects, and requests
    the expected DragMC identity.
 
 The update has three possible outcomes:
 
-- **Updated:** avrdude verified flash and DragWin received the expected
-  `HELLO:DRAG_MC:<version>:...:MCU:MEGA2560` identity.
-- **Written but not confirmed:** avrdude verified flash, but DragWin did not
+- **Updated:** the uploader verified flash and DragWin received the expected
+  product, version, and MCU identity (Mega `DRAG_MC`/`MEGA2560`, Due
+  `DRAG_MC_DUE`/`SAM3X8E`).
+- **Written but not confirmed:** the uploader verified flash, but DragWin did not
   receive the expected identity within 20 seconds. Check the selected port and
-  power-cycle the Mega.
+  power-cycle the controller. This is not reported as a confirmed update.
 - **Failed:** no successful upload was reported. DragWin shows the useful final
-  avrdude output and attempts to reopen the previous serial connection.
+  uploader output and attempts to reopen the previous serial connection.
+
+For Due, the 1200-baud Programming-port reset/erase occurs before bossac writes.
+An interrupted update can leave no application running; repeat the upload with
+DragWin's explicit board confirmation or Arduino IDE/CLI. The current firmware
+version need not increase for an intentional reinstall. Both the full Due race
+identity and the older light-only Due sketch select the Due **race** package;
+updating replaces the diagnostic sketch, not the board's ROM bootloader.
 
 ## Supported Recovery
 
@@ -37,6 +53,10 @@ The updater cannot repair a missing or damaged bootloader. Restore that with an
 ISP programmer and Arduino tooling before using DragWin. The normal updater
 never writes a `with_bootloader.hex` image and never disables the ATmega2560
 signature check or flash verification.
+
+The Due path uses its Programming-port interface and SAM ROM bootloader. It
+does not implement Native USB port discovery/re-enumeration or any native Linux
+uploader. Never select a Mega package for a Due or a Due package for a Mega.
 
 ## Uploader Acquisition
 
@@ -55,7 +75,20 @@ before extraction. avrdude is GPL-licensed; source and license information are
 available from [the avrdude project](https://github.com/avrdudes/avrdude). The
 tool archive is supplied by [Arduino Downloads](https://downloads.arduino.cc/).
 
+Due updates use **bossac 1.6.1-arduino**, the version declared by Arduino SAM
+Boards 1.6.12. Lookup order is `DRAGWIN_BOSSAC_PATH` (development override),
+`%LOCALAPPDATA%\dragWin\Tools\bossac\1.6.1-arduino`, then that exact installed
+Arduino tool version. Otherwise DragWin downloads the official Windows archive
+after confirmation, verifies its pinned size (222,918 bytes) and SHA-256, and
+extracts only `bossac.exe`. The override must be compatible with the SAM
+Programming-port recipe; arbitrary newer bossac versions are not auto-selected.
+No Arduino IDE installation is needed when downloading the pinned uploader.
+
 ## Wine Compatibility
+
+The results below qualify only the **Mega/avrdude** path. The new Due/bossac
+workflow, its 1200-baud reset, and its 32-bit Windows uploader need separate
+Wine qualification on both Intel and ARM64 Linux.
 
 The updater has been verified from the self-contained Windows x64 DragWin
 release under Wine 11 on an Intel Linux system. In the tested setup, the Mega
@@ -88,6 +121,8 @@ Mega package from the repository root:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
   .\tools\Build-ControllerFirmware.ps1 `
   -ArduinoCliPath "C:\Program Files\Arduino CLI\arduino-cli.exe"
+# Also build the independent Due package:
+.\tools\Build-ControllerFirmware.ps1 -Board Due
 ```
 
 The script:
@@ -106,3 +141,13 @@ name, size, SHA-256, Intel HEX records, checksums, and EOF before releasing the
 COM port. Publishing fails when the package matching `FirmwareVersion.h` is
 absent. Build and commit the generated package with the exact firmware source
 that produced it.
+
+`-Board Due` requires the `arduino:sam` core and compiles
+`arduino:sam:arduino_due_x_dbg`. Its version comes from
+`DRAGMC_DUE_FIRMWARE_VERSION` in the same header. It packages only
+`dragMC.ino.bin` as `DragMC-due-<version>.dragfw`, leaving Mega packages intact.
+Due manifests are whitelisted separately, including product/MCU, Programming
+Port FQBN, bossac backend and reset baud. DragWin checks the BIN size, hash and
+SAM3X8E stack/reset vectors; a HEX, Native USB profile, wrong board tuple,
+malformed image, duplicate package or cross-board selection is rejected before
+upload. Publish now requires packages matching both firmware version macros.

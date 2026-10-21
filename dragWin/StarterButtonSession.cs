@@ -9,7 +9,12 @@ internal sealed class StarterButtonSession
     private ushort? token;
 
     public static bool Supported(ControllerIdentity? identity) =>
-        identity is { Product: "DRAG_MC", Mcu: "MEGA2560", ProtocolVersion: >= RequiredProtocolVersion };
+        identity is { Product: "DRAG_MC", Mcu: "MEGA2560", ProtocolVersion: >= RequiredProtocolVersion } or
+        { Product: "DRAG_MC_DUE", Mcu: "SAM3X8E", ProtocolVersion: >= RequiredProtocolVersion };
+
+    public const string FirmwareRequirement =
+        "Starter Button mode requires Mega DragMC 0.6.6+ or experimental Due race firmware (protocol 9+). " +
+        "The Due light-tree-only sketch cannot run a race.";
 
     public void Arm(bool manualStart)
     {

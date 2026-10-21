@@ -21,11 +21,13 @@ information is also included in their NuGet package metadata.
 
 ## Arduino Firmware Toolchain
 
-DragMC builds against the Arduino AVR Boards core. The core and bundled
+DragMC builds against the Arduino AVR and SAM Boards cores. The cores and bundled
 toolchain contain components under their respective upstream licenses.
 
 - Arduino AVR core source and licensing:
   <https://github.com/arduino/ArduinoCore-avr>
+- Arduino SAM core source and licensing:
+  <https://github.com/arduino/ArduinoCore-sam>
 - Arduino CLI source and licensing:
   <https://github.com/arduino/arduino-cli>
 
@@ -41,6 +43,15 @@ tool cache.
   <https://github.com/avrdudes/avrdude>
 - Official Arduino tool downloads:
   <https://downloads.arduino.cc/>
+
+## bossac / BOSSA
+
+Due updates use bossac, the Arduino SAM flash uploader. DragWin can reuse the
+installed SAM tool or download Arduino's pinned Windows 1.6.1-arduino archive,
+checking its size and SHA-256 before extracting `bossac.exe` into the local tool
+cache. The uploader itself is not bundled in Drag's source or application ZIP.
+Source and upstream license information: <https://github.com/shumatech/BOSSA>.
+Official archive: <https://downloads.arduino.cc/bossac-1.6.1-arduino-mingw32.tar.gz>.
 
 ## Optional Speech Engines
 

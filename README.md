@@ -20,10 +20,18 @@ tournaments, reports, diagnostics, backups, and controller firmware updates.
 - Full and Pro Tree timing with configurable staging behavior and staged delay.
 - Current source adds optional on-screen Starter Button mode (DragMC 0.6.6 /
   protocol 9 required); this is not yet included in beta.2 downloads.
+- Current source also builds an experimental Arduino Due ISR-capture port from
+  the same race sketch. See [Due bench wiring and validation](docs/DUE_PORT.md);
+  3.3 V interfaces and physical timing qualification are required.
 - Practice passes, pass-result history, tournament setup, ordered lane choice,
   byes, advancement, and final standings.
+- Current source adds an automatic, maximizable completed-pass scoreboard for
+  practice and tournament heats, with side-by-side lane results, signed ET minus
+  dial, and two-lane finish lead. Detailed history remains available; not in beta.2.
 - Four required beam sensors per lane plus two optional interval timers.
 - Controller-maintained sensor edge counts and raw blocked-pulse durations.
+- Current source adds saved Sensor Test lane selection (protocol 11), with
+  unused Due interrupts physically disabled and independent race capture scope.
 - Cumulative interval, speed-trap, reaction, elapsed-time, speed, breakout,
   placement, foul, and DNF reporting.
 - Local SQLite racer, car, tournament, pass, and settings storage.
@@ -32,18 +40,20 @@ tournaments, reports, diagnostics, backups, and controller firmware updates.
   backups.
 - Optional Windows SAPI, local Piper, or native Linux eSpeak NG announcements,
   disabled by default.
-- In-app installation of the bundled DragMC firmware through the Mega's normal
-  USB bootloader.
+- In-app installation of bundled Mega firmware, plus current-source Due
+  Programming-port updates with a separate BIN package and bossac uploader
+  (physical Due updater validation pending; not in beta.2).
 
 ## Validation Status
 
-Lane 1 has four LM393 sensors wired and electrically validated. Sensor Test
-reported every input, and cardboard beam interruptions completed multiple
-end-to-end passes. A normal car has not yet completed that test because the
-3/4-inch track deck leaves the present optical paths below the guide flag. The
-venue owner does not want to route the track. The current prototype plan is to
-extend the original interrupter's leads and remount it on the underside of the
-LM393 PCB, reconnecting by electrical function because the footprint is mirrored.
+Lane 1 has four LM393 sensors installed. Earlier cardboard interruptions
+completed end-to-end passes; October 19 tests confirmed actual guide flags
+during slow movement, but powered-car capture is not yet reliable. Source
+firmware 0.6.7 removes the old speed-trap/finish qualification delay and adds
+requested scan-timing measurements to investigate short and missing pulses.
+This change is not yet physically validated or included in beta.2 downloads.
+The 3/4-inch track deck remains a mounting constraint, and the venue owner does
+not want routing. Preserve guide clearance and rigid optical alignment.
 
 The two optional interval sensors per lane are implemented in firmware,
 diagnostics, pass results, tournament history, and exports, but are not yet
@@ -136,6 +146,7 @@ sharing any diagnostic material.
 - [Linux speech under Wine](docs/LINUX_SPEECH.md)
 - [Piper speech](docs/PIPER_SPEECH.md)
 - [Arduino Due light-tree diagnostic](dragMCDueLightTest/README.md)
+- [Experimental Due race firmware and ISR sensor pin map](docs/DUE_PORT.md)
 - [Serial protocol](docs/SERIAL_PROTOCOL.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Engineering backlog](TODO.md)

@@ -67,3 +67,26 @@ jobs:
 
       - name: Test speech helper
         run: python3 -B -m unittest tools/test_drag_speech_helper.py
+
+  due-firmware:
+    name: Experimental Arduino Due firmware
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Arduino CLI
+        uses: arduino/setup-arduino-cli@7ef629dcdf0f458ab7ae83149d629443deac6eac # v2.0.0
+
+      - name: Install Arduino SAM Boards
+        run: |
+          arduino-cli core update-index
+          arduino-cli core install arduino:sam@1.6.12
+
+      - name: Compile shared sketch for Due Programming Port
+        run: arduino-cli compile --fqbn arduino:sam:arduino_due_x_dbg dragMC
+
+      - name: Test Due interrupt capture and shared race logic
+        run: |
+          g++ -std=c++17 -I tools/firmware-tests tools/firmware-tests/due.cpp -o /tmp/drag-due-tests
+          /tmp/drag-due-tests

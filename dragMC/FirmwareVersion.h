@@ -1,3 +1,4 @@
 #pragma once
 
-#define DRAGMC_FIRMWARE_VERSION "0.6.6"
+#define DRAGMC_FIRMWARE_VERSION "0.6.8"
+#define DRAGMC_DUE_FIRMWARE_VERSION "0.1.2"

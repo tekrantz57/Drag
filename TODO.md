@@ -11,9 +11,12 @@
   and record the raw pulse widths reported by Sensor Test at representative
   speeds. Cardboard interruptions have already validated all four sensors and
   produced complete passes.
-- Revisit the current 2 ms debounce only after pulse-width measurements are
-  available. A pulse shorter than 2 ms is recorded by diagnostics but is not
-  accepted as a race sensor transition.
+- Validate firmware 0.6.7 at the venue. October 19 tests captured finish pulses
+  around 1.4-2.2 ms that were rejected by the old qualification; the physical
+  speed-trap signal also missed raw detection on a powered pass. Source now
+  captures trap/finish on the first sampled raw edge, leaving staging and interval
+  debounce unchanged. Record scan-start gaps and scan durations after each test;
+  use a scope/logic analyzer if raw edges are still missing.
 - Decide whether polling remains sufficient after comparing repeated physical
   passes with the edge counts. Consider pulse-stretching hardware or port-level
   pin-change interrupts only if repeatable passes are missed or pulses approach
@@ -25,6 +28,27 @@
   10k pulldowns on disconnected active-HIGH inputs that are being monitored.
 - Physically install and validate the optional interval-timer pairs on D2-D9.
   Compare moving-car edge counts and pulse widths before relying on the times.
+
+## Polling-loop timing investigation
+
+- Profile the individual sections between sensor scans, separating ordinary
+  race operation from Sensor Test, heartbeat, and command-processing spikes.
+  October 19 Sensor Test measurements reached about 2.7 ms between scan starts,
+  with about 0.4 ms spent scanning; these are observed maxima, not guaranteed
+  bounds or measurements of every loop.
+- Consider caching Tree output states so unchanged pre-stage/stage lights do
+  not incur eight redundant digitalWrite calls each loop. Preserve light-test
+  ownership, reset behavior, and prompt staging indication.
+- Consider scanning only required inputs during races while preserving full
+  diagnostic access, optional interval timers, and necessary clear/staging
+  checks. Unwired lanes must not generate avoidable diagnostic workload.
+- Measure formatting/checksum cost and consider deferring or budgeting sensor
+  diagnostic preparation and expensive command work between scans. Serial output
+  is already queued and limited to available transmit-buffer space; do not
+  assume wire transmission itself accounts for the measured gap.
+- Compare scan-gap distributions and repeated short-pulse capture before/after
+  changes, including all four lanes and diagnostic traffic. Keep changes scoped
+  and regression-test Tree timing, first-edge latching, and result delivery.
 
 ## Venue rule decisions
 
@@ -46,11 +70,29 @@
 - Confirm the physical locations of Interval 1 and Interval 2 for each lane
   and record their distances from stage for later speed/acceleration analysis.
 - Reassess Mega SRAM after physical testing. Firmware with all 24 debounced
-  diagnostic inputs, change-only monitoring, and starter control currently uses 6,717 bytes,
-  about 81% of the Mega's 8 KB SRAM.
+  diagnostic inputs, starter control, scan timing, and scoped monitoring currently uses 6,760 bytes,
+  about 82% of the Mega's 8 KB SRAM (firmware 0.6.8).
 
 ## Possible future controller
 
+- Validate the experimental shared-sketch Arduino Due port documented in
+  `docs/DUE_PORT.md` as an available alternative to waiting for an ESP32-S31
+  board. Its 84 MHz 32-bit CPU and 96 KB SRAM provide substantially
+  more processing/memory headroom than the 16 MHz, 8 KB Mega. Measure actual
+  timing rather than extrapolating scan gaps from the clock ratio. Prefer short
+  sensor ISRs that capture timestamps/state, with reporting in the main loop.
+  The older `dragMCDueLightTest` remains light-tree only; the shared `dragMC`
+  sketch now includes experimental Due race/ISR support with lane 4 inputs on
+  D50-D53 instead of Mega A12-A15. Validate safe 3.3 V sensor/Tree interfacing,
+  defined levels on unused ISR inputs, repeated passes, four-lane load, and
+  physical timing accuracy. Native Windows in-app flashing succeeded on the Due
+  and Elegoo Mega on October 20, 2026. Deliberate hardware failure/recovery checks
+  remain; separately test Wine (Mega updater success does not qualify bossac).
+  Never connect 5 V sensor outputs directly
+  to Due inputs or flash the Mega image onto it. Faster capture cannot fix a
+  guide flag that does not interrupt the beam.
+  References: [Due specifications](https://docs.arduino.cc/hardware/due),
+  [Mega specifications](https://docs.arduino.cc/hardware/mega-2560).
 - Revisit the ESP32-S31 after mature development boards or suitable carrier
   boards are available. Espressif's preliminary ESP32-S31-WROOM-1/-1U and
   WROOM-3/-3U documentation exposes 54 general-purpose GPIO signals; six of
@@ -75,6 +117,11 @@
 
 ## Remaining controller firmware update bench tests
 
+- Completed October 20, 2026: the operator successfully flashed the Due and
+  Elegoo Mega through DragWin on native Windows. October 21: practice-window
+  and tournament starter buttons were reported working as intended. These
+  successes do not qualify at-speed capture, four-lane operation, or Due/bossac
+  under Wine.
 - Completed July 30, 2026: a self-contained x64 DragWin publish ran under Wine
   11 on Intel Linux with `/dev/ttyACM0` linked as `COM33`; DragWin downloaded
   its verified Windows avrdude package and successfully flashed the bundled
@@ -87,5 +134,6 @@
 - Test upload cancellation/failure behavior by selecting an unused COM port
   and by disconnecting USB before upload. Do not deliberately remove the
   bootloader.
-- Test at least one official Mega 2560 and one compatible clone if available.
+- Extend updater coverage to available official Mega 2560 hardware; the Elegoo
+  Mega clone's native Windows upload has succeeded.
 - Run Sensor Test and a physical pass after the first in-app firmware update.

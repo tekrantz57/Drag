@@ -5,8 +5,12 @@ ASCII `0x20` through `0x7E` are not permitted inside a message.
 
 The serial link runs at 115200 baud.
 
-Current source firmware is DragMC 0.6.6, protocol 9. Protocol 9 adds optional
-starter-button authorization; pins and sensor timing are unchanged.
+Current source firmware is Mega DragMC 0.6.8 / Due 0.1.2, protocol 11. Protocol 9 added optional
+starter-button authorization. Protocol 10 captures speed-trap and finish on the
+first sampled raw blocked edge and adds requested scan-timing diagnostics. Pins,
+staging debounce, and Tree timing are unchanged.
+Protocol 11 adds lane-scoped monitoring and `CAPTURE` sensor status. The Due
+physically detaches unused inputs; the Mega retains polling and filters diagnostics.
 
 ```text
 PART:PART:PART:XX
@@ -102,6 +106,7 @@ accepts a later stage blockage even after the pre-stage beam has cleared.
 - `STATUS`
 - `SENSOR_DIAGNOSTICS`
 - `SENSOR_MONITOR:START`
+- `SENSOR_MONITOR:START:<lane-list|NONE>` (protocol 11; for example `1` or `1,4`)
 - `SENSOR_MONITOR:STOP`
 - `LIGHT_TEST:START`
 - `LIGHT_TEST:SET:<lane>:<PRESTAGE|STAGE|AMBER_1|AMBER_2|AMBER_3|GREEN|RED>:<0|1>`
@@ -127,6 +132,16 @@ accepted only outside staging and an active race.
 ## Controller-to-Windows messages
 
 - `HELLO:DRAG_MC:<firmware-version>:PROTO:<protocol-version>:MCU:MEGA2560:LANES:<2|4>:HEAT_LANES:<list>`
+- Experimental Due race target uses the same commands and results with
+  `HELLO:DRAG_MC_DUE:0.1.2:PROTO:11:MCU:SAM3X8E:LANES:<2|4>:HEAT_LANES:<list>`.
+  It is not a Mega firmware-update target; see `DUE_PORT.md`. Due intervals,
+  trap and finish use ISR raw-edge timestamps, while stage/pre-stage retain
+  2 ms qualification. Due scan diagnostics measure main-loop snapshots, not
+  interrupt latency. The older `DRAG_MC_DUE_LIGHT_TEST` remains light-only.
+  Due 0.1.1 reports `ERROR:SENSOR_CAPTURE_NOISE:LANE:<n>:SENSOR:<name>` and
+  disables a pin after 32 ISR callbacks without a main-loop snapshot. Capture
+  stays disabled until `RESET_SENSOR_DIAGNOSTICS` or reboot. Fix/bias the input
+  before reset; a required sensor fault prevents that lane's race capture.
 - `HEARTBEAT:<controller-millis>:SEQ:<last-event-sequence>:STATE:<state>`
 - `ACK:PING`
 - `ACK:RESET`
@@ -151,7 +166,8 @@ accepted only outside staging and an active race.
 - `STATUS:INTERVAL_LANES:<NONE|comma-separated-physical-lanes>`
 - `STATUS:INTERVALS:LANE:<lane>:ENABLED:<0|1>:INTERVAL_1:<0|1>:INTERVAL_2:<0|1>`
 - `STATUS:LANE:<lane>:DIAL_MS:<milliseconds>:PRESTAGE:<0|1>:PRESTAGE_LATCHED:<0|1>:STAGE:<0|1>:SPEED_TRAP:<0|1>:FINISH:<0|1>:FOUL:<0|1>:FINISHED:<0|1>`
-- `SENSOR:<lane>:<name>:INSTALLED:<0|1>:BLOCKED:<0|1>:RAW:<0|1>:EDGES:<count>:PULSE_US:<microseconds|NONE>`
+- `SENSOR:<lane>:<name>:INSTALLED:<0|1>:CAPTURE:<0|1>:BLOCKED:<0|1>:RAW:<0|1>:EDGES:<count>:PULSE_US:<microseconds|NONE>`
+  (`CAPTURE` added in protocol 11; older firmware omits it.)
 - `EVENT:TREE:<state>`
 - `EVENT:TREE:STAGING_ABORTED`
 - `EVENT:LANE:<lane>:AMBER_<1|2|3>`
@@ -189,12 +205,26 @@ The sequence number increments for each `EVENT` or `RESULT` frame and resets
 when the controller resets. Windows should treat these fields as metadata; the
 race meaning is still in the leading fields.
 
-Sensor diagnostics are collected from raw input transitions before the 2 ms
-race debounce is applied. `EDGES` counts clear-to-blocked transitions.
+Sensor diagnostics are collected from raw input transitions. Staging and interval
+inputs retain 2 ms debounce; speed-trap and finish bypass that qualification in
+firmware 0.6.7+. Those race results latch once per pass, using the first sampled
+blocked edge. Chatter cannot overwrite the latched timestamps. No interrupt
+capture is added: a pulse entirely between scans can still be missed.
+`EDGES` counts clear-to-blocked transitions.
 `PULSE_US` is the duration of the most recently completed blocked pulse, or
 `NONE` if no pulse has completed since startup or the last diagnostic reset.
 Counters saturate rather than wrapping and can be cleared without resetting
 the race controller.
+
+Protocol 10 adds `SCAN_DIAGNOSTICS`, which replies once with
+`STATUS:SCAN:MAX_GAP_US:<microseconds>:MAX_DURATION_US:<microseconds>`.
+These are the largest intervals between starts of full 24-input scans and the
+largest scan execution time since startup or `RESET_SENSOR_DIAGNOSTICS`.
+They are not per-pin measurements; gap plus duration is a conservative bound
+on spacing between two samples of an individual input in the observed window.
+Observed maxima are not a guarantee against future longer delays.
+Use Sensor Test > Read Scan Timing after a pass. Nothing is automatically
+streamed for this measurement, and the values persist after a race completes.
 
 Protocol 6 adds leased sensor monitoring. `SENSOR_MONITOR:START` sends an
 initial snapshot incrementally and then sends change-only `SENSOR` frames. The
@@ -203,6 +233,25 @@ same command renews the three-second lease without repeating the snapshot.
 stream. Diagnostic frames retain four free output-queue positions for
 race-critical traffic, and a pending sensor remains pending until its newest
 state is successfully queued. DragWin renews the lease once per second.
+
+Protocol 11 adds `SENSOR_MONITOR:START:<lane-list|NONE>`. The list accepts unique
+physical lane numbers 1-4, independently of race lane count; NONE selects no
+lanes. Malformed/duplicate lists return `ERROR:VALUE:SENSOR_MONITOR` without
+changing scope. Identical renewals retain the current capture baseline and do
+not repeat snapshots. A changed list replaces pending diagnostics and snapshots
+the new scope. Required sensors and configured installed intervals are captured;
+uninstalled interval positions are reported as not installed, not enabled for ISR
+capture. The unscoped legacy START selects all lanes' installed sensors.
+
+On Due 0.1.2, idle startup has all sensor interrupts detached. ARM or legacy
+RESET enables only participating/installed inputs, taking a fresh baseline
+without counting an edge. An armed race overrides diagnostic scope. Once the
+race finishes, the active monitor lease resumes, or all sensor interrupts are
+detached if there is no monitor. STOP/lease expiry cannot disable race inputs.
+Disabled inputs discard pending edges but retain diagnostic counters; noise
+faults require explicit diagnostic reset after correcting wiring. `CAPTURE:0`
+also covers noise-quarantined inputs. Mega 0.6.8 filters diagnostic traffic by
+scope but continues polling all inputs.
 
 Protocol 8 adds guarded tree-light testing. `LIGHT_TEST:START` is accepted only
 while the controller is waiting for staging and temporarily suspends normal

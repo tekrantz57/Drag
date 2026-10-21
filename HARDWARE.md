@@ -6,6 +6,11 @@
 - USB serial connection to the Windows app at 115200 baud.
 - Firmware sketch: `dragMC/dragMC.ino`.
 
+The same sketch has an experimental Arduino Due ISR-capture target. All wiring
+below is the **5 V Mega** reference unless explicitly stated otherwise. For the
+Due's 3.3 V precautions, lane 4 remap, and bench procedure, use
+[Due Race Firmware](docs/DUE_PORT.md); do not transfer the Mega wiring blindly.
+
 James Cleave shared a reference test rig for a similar slot-car sensor project
 that also used an Arduino Mega with multiple LM393 slot sensor boards on a
 breadboard. That corroborates the Mega choice for this project: enough I/O for
@@ -95,9 +100,12 @@ all four inputs, and cardboard beam interruptions produced complete passes.
 
 The Windows `Test Sensors` window displays a raw blocked-edge count and the
 most recently completed raw blocked-pulse width for each input. These values
-are collected before the firmware's 2 ms race debounce. Use them during moving
-car tests on A2 and A3: the count confirms that a pulse reached the Mega, and
-the pulse width shows whether it was long enough to pass the current debounce.
+are collected from raw input transitions. Firmware 0.6.7 captures speed-trap and
+finish on the first sampled blocked edge, without the old 2 ms qualification;
+staging and interval inputs retain their debounce. Each race timestamp latches
+once per pass. Use edge counts, pulse widths, and Read Scan Timing after moving
+car tests to assess capture reliability. Polling can still miss an entire pulse
+between samples; a clean slow-hand test does not establish detection at speed.
 
 | Lane | Pre-stage | Stage | Interval 1 | Interval 2 | Speed trap | Finish |
 | --- | --- | --- | --- | --- | --- | --- |

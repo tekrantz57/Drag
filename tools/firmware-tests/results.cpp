@@ -6,6 +6,10 @@ void resetTest(RaceMode mode) {
   Serial.output.clear();
   Serial.writeQuota = 1;
   testTimeMs = 0;
+  testSubmillisUs = 0;
+  testReadCostUs = 0;
+  maximumScanGapUs = maximumScanDurationUs = 0;
+  scanTimingAvailable = false;
   serialQueueCount = serialQueueHead = serialQueueTail = serialHeadOffset = 0;
   droppedSerialMessageCount = 0;
   raceMode = mode;
@@ -14,6 +18,11 @@ void resetTest(RaceMode mode) {
   stagedDelayMs = DEFAULT_STAGED_DELAY_MS;
   activeLaneCount = 4;
   heatLaneMask = splitLaneMask = 0x0F;
+  sensorMonitorEnabled = false;
+  sensorMonitorLaneMask = 0x0F;
+#ifdef DRAG_DUE_CAPTURE
+  dueRaceCaptureArmed = true;
+#endif
   enterState(TreeState::WaitingForAllLanes, 0);
   serialQueueCount = serialQueueHead = serialQueueTail = 0;
 }
@@ -51,6 +60,11 @@ void stage(bool blocked) {
           blocked && (sensor == PreStageSensor || sensor == StageSensor) ? HIGH : LOW;
       sensors[lane][sensor] = DebouncedBeamSensor{};
       sensors[lane][sensor].begin(SENSOR_PINS[lane][sensor]);
+#ifdef DRAG_DUE_CAPTURE
+      // Fixture: establish an already-held staging state without manufacturing edges.
+      sensors[lane][sensor].setEnabled(true);
+      sensors[lane][sensor].update(0, true);
+#endif
     }
   }
 }
@@ -86,6 +100,10 @@ void starterTests() {
       starterButtonMode = false;
       command("ARM:MANUAL");
       assert(starterButtonMode && treeState == TreeState::WaitingForAllLanes && !startAuthorized);
+#ifdef DRAG_DUE_CAPTURE
+      testTimeMs += 3;  // Re-arming takes a fresh baseline and requalifies held stage beams.
+      scanSensors(testTimeMs);
+#endif
       updateTree(testTimeMs);
       command("START_TREE:" + std::to_string(stagingToken));
       assert(startAuthorized);
@@ -109,6 +127,10 @@ void starterTests() {
 
       command("ARM:AUTO");
       assert(!starterButtonMode);
+#ifdef DRAG_DUE_CAPTURE
+      testTimeMs += 3;
+      scanSensors(testTimeMs);
+#endif
       updateTree(testTimeMs);
       updateTree(testTimeMs);
       assert(treeState == TreeState::RaceActive);
@@ -119,7 +141,94 @@ void starterTests() {
   std::cout << "Firmware starter-button tests passed.\n";
 }
 
+void shortPulseTests() {
+  for (auto mode : {RaceMode::HeadsUp, RaceMode::Bracket}) {
+    resetTest(mode);
+    stage(false);
+    heatLaneMask = 1;
+    splitLaneMask = 0;
+    treeState = TreeState::RaceActive;
+    lanes[0].launched = true;
+    lanes[0].launchedAtUs = 1000;
+    testTimeMs = 20;
+    testSubmillisUs = 100;
+    testPinLevels[A2] = HIGH;
+    scanSensors(testTimeMs);
+    updateLaneRace(0);
+    assert(lanes[0].crossedSpeedTrap && lanes[0].speedTrapAtUs == 20100);
+    testSubmillisUs = 500;
+    testPinLevels[A2] = LOW;
+    scanSensors(testTimeMs);
+    updateLaneRace(0);
+    assert(sensors[0][SpeedTrapSensor].lastRawPulseWidthUs() == 400);
+    testSubmillisUs = 600;
+    testPinLevels[A2] = HIGH;
+    scanSensors(testTimeMs);
+    updateLaneRace(0);
+    assert(lanes[0].speedTrapAtUs == 20100);
+    testTimeMs = 30;
+    testSubmillisUs = 0;
+    testPinLevels[A3] = HIGH;
+    scanSensors(testTimeMs);
+    updateLaneRace(0);
+    assert(lanes[0].finished && lanes[0].elapsedUs == 29000);
+    testSubmillisUs = 300;
+    testPinLevels[A3] = LOW;
+    scanSensors(testTimeMs);
+    updateLaneRace(0);
+    assert(sensors[0][FinishSensor].lastRawPulseWidthUs() == 300);
+    testSubmillisUs = 500;
+    testPinLevels[A3] = HIGH;
+    scanSensors(testTimeMs);
+    updateLaneRace(0);
+    assert(lanes[0].finishedAtUs == 30000 && lanes[0].elapsedUs == 29000);
+    assert(sensors[0][FinishSensor].blockedEdgeCount() == 2);
+
+    // The exact same short pulse must not bypass staging or interval debounce.
+    testTimeMs = 40;
+    testSubmillisUs = 0;
+    testPinLevels[A0] = testPinLevels[A1] = testPinLevels[2] = HIGH;
+    scanSensors(testTimeMs);
+    assert(!sensors[0][PreStageSensor].isBlocked() && !sensors[0][StageSensor].isBlocked());
+    assert(!sensors[0][Split1Sensor].isBlocked());
+    testSubmillisUs = 500;
+    testPinLevels[A0] = testPinLevels[A1] = testPinLevels[2] = LOW;
+    scanSensors(testTimeMs);
+    assert(!sensors[0][StageSensor].becameBlocked());
+    testTimeMs = 41;
+    testSubmillisUs = 0;
+    testPinLevels[A0] = testPinLevels[A1] = HIGH;
+    scanSensors(testTimeMs);
+    testTimeMs = 43;
+    scanSensors(testTimeMs);
+    assert(sensors[0][PreStageSensor].isBlocked() && sensors[0][StageSensor].isBlocked());
+  }
+
+  resetSensorDiagnostics();
+  recordScanStart(ULONG_MAX - 15UL);
+  recordScanStart(20);
+  assert(maximumScanGapUs == 36);
+  recordScanStart(100);
+  assert(maximumScanGapUs == 80);
+  resetSensorDiagnostics();
+  assert(!scanTimingAvailable && maximumScanGapUs == 0 && maximumScanDurationUs == 0);
+  testReadCostUs = 4;
+  scanSensors(testTimeMs);
+  assert(maximumScanDurationUs == MAX_LANE_COUNT * SENSORS_PER_LANE * 4);
+  testReadCostUs = 0;
+  const auto gap = maximumScanGapUs;
+  const auto duration = maximumScanDurationUs;
+  command("SCAN_DIAGNOSTICS");
+  assert(Serial.output.find("STATUS:SCAN:MAX_GAP_US:" + std::to_string(gap) +
+      ":MAX_DURATION_US:" + std::to_string(duration)) != std::string::npos);
+  std::cout << "Short-pulse capture and scan timing tests passed.\n";
+}
+
 int main() {
+  assert(DragBoard::validPinMap());
+#ifndef DRAG_DUE_CAPTURE
+  shortPulseTests();
+#endif
   starterTests();
   for (RaceMode mode : {RaceMode::HeadsUp, RaceMode::Bracket}) {
     resetTest(mode);
@@ -180,4 +289,5 @@ int main() {
   enterState(TreeState::WaitingForAllLanes, 0);
   assert(!raceResultsPending);
   std::cout << "Firmware result delivery tests passed.\n";
+  return 0;
 }

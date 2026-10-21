@@ -13,7 +13,9 @@ $version = [string]$projectXml.Project.PropertyGroup.DisplayVersion | Where-Obje
 if ($version -notmatch '^v\d+\.\d+\.\d+-beta\.\d+$') { throw "Unexpected release version: $version" }
 $firmwareHeader = Get-Content -LiteralPath (Join-Path $root 'dragMC\FirmwareVersion.h') -Raw
 $firmwareVersion = [regex]::Match($firmwareHeader, 'DRAGMC_FIRMWARE_VERSION\s+"([^"]+)"').Groups[1].Value
+$dueFirmwareVersion = [regex]::Match($firmwareHeader, 'DRAGMC_DUE_FIRMWARE_VERSION\s+"([^"]+)"').Groups[1].Value
 if (!$firmwareVersion) { throw 'Cannot read controller firmware version.' }
+if (!$dueFirmwareVersion) { throw 'Cannot read Due firmware version.' }
 
 Push-Location $root
 try {
@@ -101,6 +103,7 @@ try {
             runtime = $runtime
             packagedUtc = [DateTimeOffset]::UtcNow.ToString('O')
             controllerFirmware = $firmwareVersion
+            dueControllerFirmware = $dueFirmwareVersion
             physicalFourLaneValidation = 'pending'
         } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $folder 'BUILD_INFO.json') -Encoding UTF8
 
