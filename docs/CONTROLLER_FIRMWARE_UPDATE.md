@@ -9,6 +9,28 @@ Due/bossac Wine qualification and deliberate failure/recovery tests remain pendi
 
 ## Operator Workflow
 
+Current source checks the identified controller against its board's validated
+bundled firmware package, offline. If the bundled version is newer, a persistent
+amber notice below the connection controls shows the board and installed/available
+versions, with **Update firmware...** opening the same updater as the File menu.
+This feature is not in the beta.2 downloads. Nothing is automatically flashed.
+
+Mega and Due versions are compared separately and numerically. Equal/newer
+controllers, unidentified/unsupported products, unparseable versions, missing
+packages, and ambiguous packages do not receive a guessed update offer. Package
+validation failures are recorded in controller activity without a popup. Reconnect
+to retry a check after repairing the local package files. Due light-test and Due
+race firmware are different product version series; migration remains available
+through the File menu rather than a misleading numeric update comparison.
+
+The notice disappears on disconnect and is suppressed in demo mode. It stays
+visible, but its update action is disabled, while update safety checks fail.
+The File menu follows the same checks: close practice/tournament/diagnostic
+windows, finish any known armed/running pass, and wait for a fresh idle heartbeat.
+An idle-looking heartbeat does not clear an arm acknowledged earlier in the same
+connection. An unidentified sketch can still use explicit manual board selection.
+The updater rechecks controller safety after tool acquisition before releasing USB.
+
 1. Connect the controller by USB and select its COM port in DragWin. For Due,
    use the connector nearest the round power jack, not Native USB. The current
    bench PC uses COM21 for Due Programming and COM26 for the Elegoo Mega;

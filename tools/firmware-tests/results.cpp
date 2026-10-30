@@ -4,6 +4,8 @@
 
 void resetTest(RaceMode mode) {
   Serial.output.clear();
+  Serial.input.clear();
+  Serial.inputPosition = 0;
   Serial.writeQuota = 1;
   testTimeMs = 0;
   testSubmillisUs = 0;
@@ -185,6 +187,7 @@ void shortPulseTests() {
     assert(sensors[0][FinishSensor].blockedEdgeCount() == 2);
 
     // The exact same short pulse must not bypass staging or interval debounce.
+    splitLaneMask = 1;
     testTimeMs = 40;
     testSubmillisUs = 0;
     testPinLevels[A0] = testPinLevels[A1] = testPinLevels[2] = HIGH;
@@ -213,6 +216,7 @@ void shortPulseTests() {
   resetSensorDiagnostics();
   assert(!scanTimingAvailable && maximumScanGapUs == 0 && maximumScanDurationUs == 0);
   testReadCostUs = 4;
+  treeState = TreeState::WaitingForClear;
   scanSensors(testTimeMs);
   assert(maximumScanDurationUs == MAX_LANE_COUNT * SENSORS_PER_LANE * 4);
   testReadCostUs = 0;
@@ -224,9 +228,174 @@ void shortPulseTests() {
   std::cout << "Short-pulse capture and scan timing tests passed.\n";
 }
 
+void lightCacheTests() {
+  setup();
+  for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
+    for (uint8_t light = 0; light < LIGHTS_PER_LANE; ++light) {
+      const auto pin = LIGHT_PINS[lane][light];
+      assert(testOutputLevels[pin] == LOW);
+      assert(testOutputWrites[pin] == 1);
+    }
+  }
+  const auto pin = LIGHT_PINS[0][GreenLight];
+  setLaneLight(0, GreenLight, false);
+  assert(testOutputWrites[pin] == 1);
+  setLaneLight(0, GreenLight, true);
+  setLaneLight(0, GreenLight, true);
+  assert(testOutputLevels[pin] == HIGH && testOutputWrites[pin] == 2);
+  resetTest(RaceMode::HeadsUp);
+  command("LIGHT_TEST:START");
+  assert(testOutputLevels[pin] == LOW && testOutputWrites[pin] == 3);
+  command("LIGHT_TEST:SET:1:GREEN:1");
+  command("LIGHT_TEST:SET:1:GREEN:1");
+  assert(testOutputLevels[pin] == HIGH && testOutputWrites[pin] == 4);
+  command("LIGHT_TEST:STOP");
+  assert(testOutputLevels[pin] == LOW && testOutputWrites[pin] == 5);
+  turnOffAllLights();
+  assert(testOutputWrites[pin] == 5);
+  std::cout << "Light output cache tests passed.\n";
+}
+
+#ifndef DRAG_DUE_CAPTURE
+void selectiveRaceScanTests() {
+  resetTest(RaceMode::HeadsUp);
+  stage(false);
+  treeState = TreeState::RaceActive;
+  activeLaneCount = 4;
+  heatLaneMask = 1;
+  splitLaneMask = 0;
+  sensorMonitorEnabled = false;
+  std::fill(std::begin(testPinReads), std::end(testPinReads), 0);
+  scanSensors(0);
+  for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
+    for (uint8_t sensor = 0; sensor < SENSORS_PER_LANE; ++sensor) {
+      const bool expected = lane == 0 && sensor != Split1Sensor && sensor != Split2Sensor;
+      assert(testPinReads[SENSOR_PINS[lane][sensor]] == (expected ? 1U : 0U));
+    }
+  }
+  // Finish must remain detectable even if no speed-trap pulse was seen.
+  lanes[0].launched = true;
+  lanes[0].launchedAtUs = 1;
+  testPinLevels[A3] = HIGH;
+  testTimeMs = 10;
+  scanSensors(testTimeMs);
+  updateLaneRace(0);
+  assert(lanes[0].finished && !lanes[0].crossedSpeedTrap);
+
+  splitLaneMask = 1;
+  std::fill(std::begin(testPinReads), std::end(testPinReads), 0);
+  scanSensors(testTimeMs);
+  assert(testPinReads[2] == 1 && testPinReads[3] == 1);
+  heatLaneMask = 0x0f;
+  splitLaneMask = 0;
+  std::fill(std::begin(testPinReads), std::end(testPinReads), 0);
+  scanSensors(testTimeMs);
+  for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane)
+    assert(testPinReads[SENSOR_PINS[lane][FinishSensor]] == 1);
+  assert(testPinReads[2] == 0);
+  heatLaneMask = 1;
+  sensorMonitorEnabled = true;
+  std::fill(std::begin(testPinReads), std::end(testPinReads), 0);
+  scanSensors(testTimeMs);
+  for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane)
+    for (uint8_t sensor = 0; sensor < SENSORS_PER_LANE; ++sensor)
+      assert(testPinReads[SENSOR_PINS[lane][sensor]] == 1);
+  // Lane settings cannot be changed while the selective race scan is active.
+  resetTest(RaceMode::HeadsUp);
+  stage(false);
+  treeState = TreeState::RaceActive;
+  activeLaneCount = 4;
+  heatLaneMask = 1;
+  lanes[0].launched = lanes[1].launched = true;
+  testPinLevels[A7] = HIGH;
+  const char* setting = "SET:HEAT_LANES:1,2";
+  char frame[64];
+  snprintf(frame, sizeof(frame), "%s:%02X\n", setting, calculateChecksum(setting));
+  Serial.input = frame;
+  while (Serial.available()) loop();
+  assert(heatLaneMask == 1 && !lanes[1].finished);
+  drain();
+  assert(Serial.output.find("ERROR:STATE:RACE_ACTIVE") != std::string::npos);
+  Serial.input.clear();
+  Serial.inputPosition = 0;
+  setting = "SENSOR_MONITOR:START:2";
+  snprintf(frame, sizeof(frame), "%s:%02X\n", setting, calculateChecksum(setting));
+  Serial.input = frame;
+  while (Serial.available()) loop();
+  loop(); // Monitoring becomes full on the next scan, preserving current-loop edges.
+  assert(sensorMonitorEnabled && sensors[1][FinishSensor].isRawBlocked());
+  testPinLevels[A7] = LOW;
+  // Opening monitoring must not erase a finish edge seen in the same loop.
+  resetTest(RaceMode::HeadsUp);
+  stage(false);
+  treeState = TreeState::RaceActive;
+  heatLaneMask = 1;
+  lanes[0].launched = true;
+  setting = "SENSOR_MONITOR:START:1";
+  snprintf(frame, sizeof(frame), "%s:%02X\n", setting, calculateChecksum(setting));
+  Serial.input = frame;
+  while (Serial.available() > MAX_SERIAL_INPUT_BYTES_PER_LOOP) loop();
+  testPinLevels[A3] = HIGH;
+  loop();
+  assert(lanes[0].finished && sensorMonitorEnabled);
+  sensorMonitorEnabled = false;
+  treeState = TreeState::WaitingForClear;
+  std::fill(std::begin(testPinReads), std::end(testPinReads), 0);
+  scanSensors(testTimeMs);
+  for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane)
+    for (uint8_t sensor = 0; sensor < SENSORS_PER_LANE; ++sensor)
+      assert(testPinReads[SENSOR_PINS[lane][sensor]] == 1);
+  testPinLevels[A3] = LOW;
+  std::cout << "Selective race scan tests passed.\n";
+}
+
+void heartbeatQuietTests() {
+  resetTest(RaceMode::HeadsUp);
+  heartbeatQuiet = false;
+  lastHeartbeatAtMs = 0;
+  starterButtonMode = true;
+  treeState = TreeState::StagingHold;
+  startAuthorized = false;
+  updateHeartbeat(1000);
+  drain();
+  assert(Serial.output.find("HEARTBEAT:") != std::string::npos);
+  Serial.output.clear();
+  startAuthorized = true;
+  updateHeartbeat(2000);
+  updateHeartbeat(3000);
+  drain();
+  assert(count(Serial.output, "HEARTBEAT_QUIET") == 1);
+  assert(Serial.output.find("HEARTBEAT:3000") == std::string::npos);
+  Serial.output.clear();
+  treeState = TreeState::RaceActive;
+  updateHeartbeat(4000);
+  drain();
+  assert(Serial.output.empty());
+  treeState = TreeState::ShowingResults;
+  updateHeartbeat(4001);
+  drain();
+  assert(Serial.output.find("HEARTBEAT:4001") != std::string::npos);
+  Serial.output.clear();
+  treeState = TreeState::StagingHold;
+  starterButtonMode = false;
+  updateHeartbeat(5000);
+  drain();
+  assert(count(Serial.output, "HEARTBEAT_QUIET") == 1);
+  Serial.output.clear();
+  treeState = TreeState::WaitingForAllLanes;
+  updateHeartbeat(5001);
+  drain();
+  assert(Serial.output.find("HEARTBEAT:5001") != std::string::npos);
+  std::cout << "Heartbeat quiet/resume tests passed.\n";
+}
+#endif
+
 int main() {
+  lightCacheTests();
   assert(DragBoard::validPinMap());
 #ifndef DRAG_DUE_CAPTURE
+  selectiveRaceScanTests();
+  heartbeatQuietTests();
   shortPulseTests();
 #endif
   starterTests();

@@ -6,6 +6,44 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
+if (args.Contains("--practice-ui", StringComparer.Ordinal))
+{
+    PracticeUiTests.Run();
+    return;
+}
+
+if (args.Contains("--heartbeat-quiet", StringComparer.Ordinal))
+{
+    var tracker = new HeartbeatQuietTracker();
+    var now = DateTimeOffset.UtcNow;
+    AssertEqual(false, tracker.IsExpected(now));
+    tracker.Observe(ProtocolMessage.Create("EVENT", "TREE", "HEARTBEAT_QUIET"), now);
+    AssertEqual(true, tracker.IsExpected(now.AddSeconds(119)));
+    AssertEqual(false, tracker.IsExpected(now.AddMinutes(2)));
+    tracker.Observe(ProtocolMessage.Create("HEARTBEAT", "123"), now.AddSeconds(2));
+    AssertEqual(false, tracker.IsExpected(now.AddSeconds(2)));
+    tracker.Observe(ProtocolMessage.Create("EVENT", "TREE", "HEARTBEAT_QUIET"), now);
+    tracker.Reset();
+    AssertEqual(false, tracker.IsExpected(now));
+    var guard = new FirmwareUpdateGuard();
+    guard.Observe(ProtocolMessage.Create("EVENT", "TREE", "HEARTBEAT_QUIET"));
+    AssertEqual(false, guard.CanUpdate);
+    Console.WriteLine("Heartbeat quiet status tests passed.");
+    return;
+}
+
+if (args.Contains("--serial-receive", StringComparer.Ordinal))
+{
+    SerialReceiveQueueTests.Run();
+    return;
+}
+
+if (args.Contains("--firmware-availability", StringComparer.Ordinal))
+{
+    FirmwareAvailabilityTests.Run();
+    return;
+}
+
 AssertEqual(
     "v0.05.0-beta.1",
     BuildIdentity.Normalize("v0.05.0-beta.1-0-gc2fb82c", "0.05.0-beta.1"));
@@ -725,6 +763,7 @@ finally
 }
 
 await FirmwareUpdateTests.Run(firmwarePackagePath);
+FirmwareAvailabilityTests.Run();
 RegressionTests.Run();
 Console.WriteLine("Protocol and regression tests passed.");
 

@@ -1,18 +1,14 @@
 using System.IO.Ports;
-using System.Text;
 
 namespace DragWin;
 
 public sealed class DragSerialClient : IDisposable
 {
-    private const int MaximumReceivedLineLength = 512;
-
     private readonly object syncRoot = new();
     private readonly object receiveSyncRoot = new();
-    private readonly StringBuilder receiveBuffer = new();
     private readonly SerialLog log = new();
     private SerialPort? serialPort;
-    private bool discardingOversizedLine;
+    private SerialReceiveQueue? receiveQueue;
     private string? lastTreeEventSignature;
     private long lastTreeEventAtMs;
     private ControllerIdentity? currentControllerIdentity;
@@ -69,8 +65,6 @@ public sealed class DragSerialClient : IDisposable
             {
                 port.Open();
                 port.DiscardInBuffer();
-                port.DataReceived += SerialPortOnDataReceived;
-                ResetReceiveBuffer();
                 LastFrameReceivedAt = null;
                 LastHelloReceivedAt = null;
                 LastHeartbeatReceivedAt = null;
@@ -78,6 +72,10 @@ public sealed class DragSerialClient : IDisposable
                 lastTreeEventSignature = null;
                 lastTreeEventAtMs = 0;
                 serialPort = port;
+                receiveQueue = new SerialReceiveQueue(
+                    line => { if (ReferenceEquals(Volatile.Read(ref serialPort), port)) ProcessReceivedLine(line); },
+                    error => { if (ReferenceEquals(Volatile.Read(ref serialPort), port)) ReportReceiveError(error); });
+                port.DataReceived += SerialPortOnDataReceived;
                 log.Info($"serial port open on {portName} at {baudRate} baud");
             }
             catch (Exception exception)
@@ -163,62 +161,11 @@ public sealed class DragSerialClient : IDisposable
 
         try
         {
-            var receivedText = port.ReadExisting();
-            if (receivedText.Length == 0)
-            {
-                return;
-            }
-
-            var completedLines = new List<string>();
-            var oversizedLineCount = 0;
-
             lock (receiveSyncRoot)
             {
-                foreach (var character in receivedText)
-                {
-                    if (character == '\n')
-                    {
-                        if (discardingOversizedLine)
-                        {
-                            oversizedLineCount++;
-                        }
-                        else
-                        {
-                            completedLines.Add(receiveBuffer.ToString().TrimEnd('\r'));
-                        }
-
-                        receiveBuffer.Clear();
-                        discardingOversizedLine = false;
-                        continue;
-                    }
-
-                    if (discardingOversizedLine)
-                    {
-                        continue;
-                    }
-
-                    if (receiveBuffer.Length >= MaximumReceivedLineLength)
-                    {
-                        receiveBuffer.Clear();
-                        discardingOversizedLine = true;
-                        continue;
-                    }
-
-                    receiveBuffer.Append(character);
-                }
-            }
-
-            for (var index = 0; index < oversizedLineCount; index++)
-            {
-                var error =
-                    $"Received line exceeded {MaximumReceivedLineLength} characters and was discarded.";
-                log.Warn(error);
-                ProtocolError?.Invoke(this, error);
-            }
-
-            foreach (var line in completedLines)
-            {
-                ProcessReceivedLine(line);
+                if (!ReferenceEquals(Volatile.Read(ref serialPort), port)) return;
+                var receivedText = port.ReadExisting();
+                if (receivedText.Length != 0) receiveQueue?.Feed(receivedText);
             }
         }
         catch (Exception exception) when (
@@ -227,6 +174,12 @@ public sealed class DragSerialClient : IDisposable
             log.Error(exception, $"serial read failed on {port.PortName}");
             ProtocolError?.Invoke(this, exception.Message);
         }
+    }
+
+    private void ReportReceiveError(string error)
+    {
+        log.Warn(error);
+        ProtocolError?.Invoke(this, error);
     }
 
     private void ProcessReceivedLine(string line)
@@ -310,16 +263,17 @@ public sealed class DragSerialClient : IDisposable
             return;
         }
 
-        serialPort.DataReceived -= SerialPortOnDataReceived;
-        var portName = serialPort.PortName;
-        if (serialPort.IsOpen)
+        var port = serialPort;
+        port.DataReceived -= SerialPortOnDataReceived;
+        var portName = port.PortName;
+        Volatile.Write(ref serialPort, null);
+        receiveQueue?.Dispose();
+        receiveQueue = null;
+        if (port.IsOpen)
         {
-            serialPort.Close();
+            port.Close();
         }
-
-        serialPort.Dispose();
-        serialPort = null;
-        ResetReceiveBuffer();
+        port.Dispose();
         LastFrameReceivedAt = null;
         LastHelloReceivedAt = null;
         LastHeartbeatReceivedAt = null;
@@ -327,15 +281,6 @@ public sealed class DragSerialClient : IDisposable
         lastTreeEventSignature = null;
         lastTreeEventAtMs = 0;
         log.Info($"serial port closed on {portName}");
-    }
-
-    private void ResetReceiveBuffer()
-    {
-        lock (receiveSyncRoot)
-        {
-            receiveBuffer.Clear();
-            discardingOversizedLine = false;
-        }
     }
 
     public void Dispose()

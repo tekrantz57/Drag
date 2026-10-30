@@ -147,6 +147,8 @@ sharing any diagnostic material.
 - [Piper speech](docs/PIPER_SPEECH.md)
 - [Arduino Due light-tree diagnostic](dragMCDueLightTest/README.md)
 - [Experimental Due race firmware and ISR sensor pin map](docs/DUE_PORT.md)
+- [Standalone Mega/Due/ESP32-C3 bench pulse generator](dragPulseTest/README.md)
+- [Bench pulse capture observations](docs/BENCH_PULSE_RESULTS.md)
 - [Serial protocol](docs/SERIAL_PROTOCOL.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Engineering backlog](TODO.md)

@@ -231,6 +231,9 @@ uint8_t serialHeadOffset = 0;
 unsigned int droppedSerialMessageCount = 0;
 uint32_t protocolSequence = 0;
 unsigned long lastHeartbeatAtMs = 0;
+#ifndef DRAG_DUE_CAPTURE
+bool heartbeatQuiet = false;
+#endif
 uint32_t pendingSensorDiagnosticMask = 0;
 unsigned long sensorMonitorRenewedAtMs = 0;
 uint8_t sensorDiagnosticCursor = 0;
@@ -343,6 +346,23 @@ void sendHeartbeat(const unsigned long nowMs) {
 }
 
 void updateHeartbeat(const unsigned long nowMs) {
+#ifndef DRAG_DUE_CAPTURE
+  const bool quiet = treeState == TreeState::RaceActive ||
+      (treeState == TreeState::StagingHold && (!starterButtonMode || startAuthorized));
+  if (quiet) {
+    if (!heartbeatQuiet) {
+      heartbeatQuiet = true;
+      sendFlashProtocolMessage(PSTR("EVENT:TREE:HEARTBEAT_QUIET"));
+    }
+    return;
+  }
+  if (heartbeatQuiet) {
+    heartbeatQuiet = false;
+    lastHeartbeatAtMs = nowMs;
+    sendHeartbeat(nowMs);
+    return;
+  }
+#endif
   if (nowMs - lastHeartbeatAtMs < HEARTBEAT_INTERVAL_MS) return;
   lastHeartbeatAtMs = nowMs;
   sendHeartbeat(nowMs);
@@ -399,7 +419,13 @@ void sendLaneEvent(const uint8_t lane, const char* event) {
   sendProtocolMessage(message);
 }
 
+uint8_t laneLightStates[MAX_LANE_COUNT] = {};
+
 void setLaneLight(const uint8_t lane, const LightIndex light, const bool on) {
+  const uint8_t mask = static_cast<uint8_t>(1U << light);
+  if (((laneLightStates[lane] & mask) != 0) == on) return;
+  if (on) laneLightStates[lane] |= mask;
+  else laneLightStates[lane] &= static_cast<uint8_t>(~mask);
   digitalWrite(LIGHT_PINS[lane][light], on ? HIGH : LOW);
 }
 
@@ -1812,7 +1838,15 @@ void scanSensors(const unsigned long nowMs) {
   const unsigned long startedUs = micros();
   recordScanStart(startedUs);
   for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
+#ifndef DRAG_DUE_CAPTURE
+    const bool selective = treeState == TreeState::RaceActive && !sensorMonitorEnabled;
+    if (selective && !laneParticipates(lane)) continue;
+    const bool scanIntervals = !selective || laneHasSplitSensors(lane);
+#endif
     for (uint8_t sensor = 0; sensor < SENSORS_PER_LANE; ++sensor) {
+#ifndef DRAG_DUE_CAPTURE
+      if (!scanIntervals && (sensor == Split1Sensor || sensor == Split2Sensor)) continue;
+#endif
       // Mega trap/finish use sampled raw edges; Due downstream inputs use ISR edges.
       // Pre-stage/stage qualification is retained on both boards.
       const bool immediate = sensor == SpeedTrapSensor || sensor == FinishSensor
@@ -1842,6 +1876,7 @@ void scanSensors(const unsigned long nowMs) {
 void setup() {
   Serial.begin(115200);
   for (uint8_t lane = 0; lane < MAX_LANE_COUNT; ++lane) {
+    laneLightStates[lane] = 0;
     for (uint8_t light = 0; light < LIGHTS_PER_LANE; ++light) {
       pinMode(LIGHT_PINS[lane][light], OUTPUT);
       digitalWrite(LIGHT_PINS[lane][light], LOW);

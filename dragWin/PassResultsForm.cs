@@ -68,8 +68,8 @@ public sealed class PassResultsForm : Form
         AddColumn("Elapsed", "ET", 48);
         AddColumn("Split1", "Interval 1", 48);
         AddColumn("Split2", "Interval 2", 48);
-        AddColumn("Split1To2", "I1-I2", 48);
-        AddColumn("Split2ToTrap", "I2-Trap", 52);
+        resultsGrid.Columns["Split1"]!.Visible = false;
+        resultsGrid.Columns["Split2"]!.Visible = false;
         AddColumn("TrapToFinish", "Trap-Finish", 58);
         AddColumn("Speed", "MPH", 50);
         AddColumn("Place", "Place", 38);
@@ -165,6 +165,11 @@ public sealed class PassResultsForm : Form
         currentResults.Clear();
         passResultAnnounced = false;
         passNumber++;
+        if (lanes.Any(splitSensorLanes.Contains))
+        {
+            resultsGrid.Columns["Split1"]!.Visible = true;
+            resultsGrid.Columns["Split2"]!.Visible = true;
+        }
         var startedAt = DateTime.Now;
         foreach (var lane in lanes.Order())
         {
@@ -179,14 +184,13 @@ public sealed class PassResultsForm : Form
                 "",
                 "",
                 "",
-                "",
-                "",
                 "Armed",
                 simulated ? "Simulated" : "Controller");
             currentResults[lane] = new PassLaneResult(resultsGrid.Rows[rowIndex])
             {
                 SplitSensorsEnabled = splitSensorLanes.Contains(lane)
             };
+            UpdateRow(currentResults[lane]);
         }
         sessionSummary.Text =
             $"Pass {passNumber}  |  Lane{(lanes.Count == 1 ? "" : "s")} {string.Join(", ", lanes.Order())}";
@@ -411,12 +415,8 @@ public sealed class PassResultsForm : Form
             result.Split1Us, result.Split1Unavailable, result.SplitSensorsEnabled);
         result.Row.Cells["Split2"].Value = FormatSplit(
             result.Split2Us, result.Split2Unavailable, result.SplitSensorsEnabled);
-        result.Row.Cells["Split1To2"].Value = FormatSegment(
-            result.Split1Us, result.Split2Us, result.SplitSensorsEnabled);
-        result.Row.Cells["Split2ToTrap"].Value = FormatSegment(
-            result.Split2Us, result.SpeedTrapUs, result.SplitSensorsEnabled);
         result.Row.Cells["TrapToFinish"].Value = FormatSegment(
-            result.SpeedTrapUs, result.ElapsedUs, result.SplitSensorsEnabled);
+            result.SpeedTrapUs, result.ElapsedUs, true);
         result.Row.Cells["Speed"].Value = result.SpeedMphX100.HasValue
             ? (result.SpeedMphX100.Value / 100.0).ToString("0.00", CultureInfo.CurrentCulture)
             : result.SpeedInvalid ? "Invalid" : result.SpeedUnavailable ? "N/A" : "";
@@ -469,6 +469,8 @@ public sealed class PassResultsForm : Form
         finishButton.Enabled = false;
         currentResults.Clear();
         resultsGrid.Rows.Clear();
+        resultsGrid.Columns["Split1"]!.Visible = false;
+        resultsGrid.Columns["Split2"]!.Visible = false;
         passNumber = 0;
         startTreeButton.Visible = false;
         startTreeButton.Enabled = false;

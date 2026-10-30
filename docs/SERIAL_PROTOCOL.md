@@ -143,6 +143,12 @@ accepted only outside staging and an active race.
   stays disabled until `RESET_SENSOR_DIAGNOSTICS` or reboot. Fix/bias the input
   before reset; a required sensor fault prevents that lane's race capture.
 - `HEARTBEAT:<controller-millis>:SEQ:<last-event-sequence>:STATE:<state>`
+- Mega 0.6.9 emits `EVENT:TREE:HEARTBEAT_QUIET` when it begins deferring
+  heartbeats during an automatic staged hold or after a manual start is
+  authorized, through active racing. It resumes with an immediate heartbeat
+  on leaving that window, including abort or completion. The Due target is
+  unchanged. A quiet event is not proof of continued connection; applications
+  must retain stale/disconnected safeguards and treat lost quiet events safely.
 - `ACK:PING`
 - `ACK:RESET`
 - `ACK:SENSOR_MONITOR:START`

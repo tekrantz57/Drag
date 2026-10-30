@@ -27,10 +27,17 @@ inline unsigned long testSubmillisUs = 0;
 inline unsigned long millis() { return testTimeMs; }
 inline unsigned long micros() { return testTimeMs * 1000UL + testSubmillisUs; }
 inline void pinMode(uint8_t, int) {}
-inline void digitalWrite(uint8_t, int) {}
+inline int testOutputLevels[256] = {};
+inline unsigned testOutputWrites[256] = {};
+inline void digitalWrite(uint8_t pin, int level) {
+  testOutputLevels[pin] = level;
+  ++testOutputWrites[pin];
+}
 inline int testPinLevels[256] = {};
+inline unsigned testPinReads[256] = {};
 inline unsigned long testReadCostUs = 0;
 inline int digitalRead(uint8_t pin) {
+  ++testPinReads[pin];
   testSubmillisUs += testReadCostUs;
   return testPinLevels[pin];
 }
@@ -49,10 +56,12 @@ inline void detachInterrupt(int pin) { testInterruptCallbacks[pin] = nullptr; }
 
 struct TestSerial {
   std::string output;
+  std::string input;
+  size_t inputPosition = 0;
   int writeQuota = 1;
   void begin(int) {}
-  int available() { return 0; }
-  int read() { return -1; }
+  int available() { return static_cast<int>(input.size() - inputPosition); }
+  int read() { return inputPosition < input.size() ? static_cast<unsigned char>(input[inputPosition++]) : -1; }
   int availableForWrite() { return writeQuota; }
   void write(const uint8_t* bytes, size_t length) {
     output.append(reinterpret_cast<const char*>(bytes), length);

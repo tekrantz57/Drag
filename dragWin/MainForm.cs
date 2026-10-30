@@ -136,6 +136,7 @@ public sealed class MainForm : Form
     };
     private readonly ToolTip toolTip = new();
     private readonly NumericUpDown[] dialInputs = new NumericUpDown[LaneCount];
+    private readonly NumericUpDown[] practiceDialInputs = new NumericUpDown[LaneCount];
     private readonly CheckBox[] practiceLaneChecks = new CheckBox[LaneCount];
     private readonly NumericUpDown trackLengthInput = new()
     {
@@ -168,6 +169,7 @@ public sealed class MainForm : Form
         FlatStyle = FlatStyle.Flat
     };
     private readonly StarterButtonSession practiceStarter = new();
+    private readonly HeartbeatQuietTracker heartbeatQuiet = new();
     private readonly System.Windows.Forms.Timer heartbeatTimer = new()
     {
         Interval = 1000
@@ -178,6 +180,10 @@ public sealed class MainForm : Form
     private int controllerMessageDispatchScheduled;
     private int diagnosticsVersion;
     private bool firmwareUpdateActive;
+    private readonly FirmwareUpdateNotice firmwareNotice = new();
+    private readonly FirmwareUpdateGuard firmwareUpdateGuard = new();
+    private ControllerIdentity? firmwareNoticeIdentity;
+    private AvailableFirmwareUpdate? availableFirmwareUpdate;
 
     public MainForm(bool demoMode = false, RaceRepository? repository = null, AppSettings? settings = null)
     {
@@ -233,8 +239,9 @@ public sealed class MainForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
-            RowCount = 4
+            RowCount = 5
         };
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -242,7 +249,8 @@ public sealed class MainForm : Form
         layout.Controls.Add(menuStrip, 0, 0);
         layout.Controls.Add(title, 0, 1);
         layout.Controls.Add(connectionControls, 0, 2);
-        layout.Controls.Add(operations, 0, 3);
+        layout.Controls.Add(firmwareNotice, 0, 3);
+        layout.Controls.Add(operations, 0, 4);
         Controls.Add(layout);
         MainMenuStrip = menuStrip;
 
@@ -263,6 +271,7 @@ public sealed class MainForm : Form
         configureRaceMenuItem.Click += (_, _) => ShowRaceSettings();
         updateControllerFirmwareMenuItem.Click += async (_, _) =>
             await UpdateControllerFirmwareAsync();
+        firmwareNotice.UpdateRequested += async (_, _) => await UpdateControllerFirmwareAsync();
         backupDatabaseMenuItem.Click += (_, _) => BackUpDatabase();
         restoreDatabaseMenuItem.Click += (_, _) => RestoreDatabase();
         openDatabaseFolderMenuItem.Click += (_, _) => OpenDatabaseFolder();
@@ -507,6 +516,8 @@ public sealed class MainForm : Form
             if (portSelector.SelectedItem as string != portName)
                 throw new InvalidOperationException("The selected COM port changed. No firmware was written.");
             FirmwareUpdatePolicy.CheckTarget(package, client.CurrentControllerIdentity);
+            if (!ControllerIsSafeForFirmwareUpdate(out var safetyReason))
+                throw new InvalidOperationException(safetyReason + " No firmware was written.");
             client.Disconnect();
             SetConnectedState(false);
             serialReleased = true;
@@ -618,8 +629,48 @@ public sealed class MainForm : Form
             return false;
         }
 
+        if (OwnedForms.Any(form => !form.IsDisposed && form is TournamentRunnerForm or SensorTestForm or LightTreeTestForm))
+        {
+            reason = "Close the tournament, sensor test, and light tree test windows before updating firmware.";
+            return false;
+        }
+        if (!ControllerIsSafeForFirmwareUpdate(out reason)) return false;
+
         reason = "";
         return true;
+    }
+
+    private bool ControllerIsSafeForFirmwareUpdate(out string reason)
+    {
+        if (client.IsConnected && client.CurrentControllerIdentity is not null &&
+            (client.LastHeartbeatReceivedAt is not { } at || DateTimeOffset.Now - at > TimeSpan.FromSeconds(3) ||
+             !firmwareUpdateGuard.CanUpdate))
+        {
+            reason = "Wait for a fresh idle controller heartbeat and finish any armed or running pass before updating firmware.";
+            return false;
+        }
+        reason = "";
+        return true;
+    }
+
+    private void UpdateFirmwareNotice()
+    {
+        var identity = !demoMode && client.IsConnected ? client.CurrentControllerIdentity : null;
+        if (identity is null)
+        {
+            firmwareNoticeIdentity = null;
+            availableFirmwareUpdate = null;
+        }
+        else if (identity != firmwareNoticeIdentity)
+        {
+            firmwareNoticeIdentity = identity;
+            availableFirmwareUpdate = FirmwareAvailability.Check(identity,
+                () => ControllerFirmwarePackage.LoadBundledPackages(), out var error);
+            if (error is not null) AppendLog($"Firmware availability check unavailable: {error}");
+        }
+        var canUpdate = CanUpdateControllerFirmware(out var reason);
+        firmwareNotice.SetAvailability(availableFirmwareUpdate, canUpdate, reason);
+        updateControllerFirmwareMenuItem.Enabled = canUpdate;
     }
 
     private async Task<bool> ReconnectAndVerifyFirmwareAsync(
@@ -905,6 +956,12 @@ public sealed class MainForm : Form
                 Value = 10.000M,
                 Width = 90
             };
+            practiceDialInputs[lane] = new NumericUpDown
+            {
+                DecimalPlaces = 3, Increment = 0.001M, Minimum = 0.100M,
+                Maximum = 60.000M, Value = 10.000M, Width = 84,
+                AccessibleName = $"Lane {lane + 1} practice dial-in"
+            };
         }
     }
 
@@ -925,7 +982,7 @@ public sealed class MainForm : Form
         practicePanel.Controls.Add(CreateSectionHeading("Practice Racing", Color.FromArgb(35, 91, 145)), 0, 0);
         practicePanel.Controls.Add(new Label
         {
-            Text = "Active lanes",
+            Text = "Active lanes / dial-in (s)",
             AutoSize = true,
             ForeColor = SystemColors.GrayText,
             Margin = new Padding(0, 8, 0, 3)
@@ -949,7 +1006,13 @@ public sealed class MainForm : Form
             };
             toolTip.SetToolTip(check, "Select the lanes that must stage for the next practice run.");
             practiceLaneChecks[lane] = check;
-            lanePanel.Controls.Add(check);
+            check.CheckedChanged += (_, _) => UpdateDialInputState();
+            var laneControls = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0, 0, 10, 4) };
+            check.Margin = new Padding(0, 5, 4, 5);
+            laneControls.Controls.Add(check);
+            laneControls.Controls.Add(practiceDialInputs[lane]);
+            toolTip.SetToolTip(practiceDialInputs[lane], "Dial-in for the next bracket practice pass (seconds); saved default is unchanged.");
+            lanePanel.Controls.Add(laneControls);
         }
         practicePanel.Controls.Add(lanePanel, 0, 2);
         practicePanel.Controls.Add(startPracticeButton, 0, 3);
@@ -1255,7 +1318,8 @@ public sealed class MainForm : Form
                SendCommandBatch(commands);
     }
 
-    private bool TryBuildRaceSettingsCommands(out List<string[]> commands, bool forArming = false)
+    private bool TryBuildRaceSettingsCommands(out List<string[]> commands, bool forArming = false,
+        IReadOnlyDictionary<int, int>? practiceDials = null)
     {
         commands = [];
         if (persistedSettings.ManualTreeStart && !StarterButtonSession.Supported(client.CurrentControllerIdentity))
@@ -1304,7 +1368,8 @@ public sealed class MainForm : Form
                 continue;
             }
 
-            var dialMilliseconds = decimal.ToInt32(dialInputs[lane].Value * 1000M);
+            var dialMilliseconds = practiceDials is not null && practiceDials.TryGetValue(lane + 1, out var value)
+                ? value : decimal.ToInt32(dialInputs[lane].Value * 1000M);
             commands.Add([
                 "SET", "DIAL",
                 (lane + 1).ToString(CultureInfo.InvariantCulture),
@@ -1335,7 +1400,8 @@ public sealed class MainForm : Form
             return;
         }
 
-        if (!TryBuildRaceSettingsCommands(out var commands, forArming: true))
+        var passDials = PracticeDials(selectedLanes);
+        if (!TryBuildRaceSettingsCommands(out var commands, forArming: true, practiceDials: passDials))
         {
             return;
         }
@@ -1350,7 +1416,8 @@ public sealed class MainForm : Form
         }
         UpdatePracticeStartButton();
         SaveCurrentSettings();
-        BeginPracticePassResults(selectedLanes);
+        BeginPracticePassResults(selectedLanes, dialMilliseconds: passDials);
+        ResetPracticeDials();
         AppendLog($"Practice setup sent for lane(s): {string.Join(", ", selectedLanes)}.");
     }
 
@@ -1370,14 +1437,13 @@ public sealed class MainForm : Form
             modeSelector.SelectedItem as string,
             "BRACKET",
             StringComparison.Ordinal);
-        var laneDialMilliseconds = selectedLanes.ToDictionary(
-            lane => lane,
-            lane => decimal.ToInt32(dialInputs[lane - 1].Value * 1000M));
+        var laneDialMilliseconds = PracticeDials(selectedLanes);
         var messages = DemoHeatSimulator.CreatePracticeMessages(
             laneDialMilliseconds,
             bracketMode,
             splitSensorLanes: persistedSettings.IntervalTimerLanes).ToArray();
-        var resultsForm = BeginPracticePassResults(selectedLanes, simulated: true);
+        var resultsForm = BeginPracticePassResults(selectedLanes, simulated: true, dialMilliseconds: laneDialMilliseconds);
+        ResetPracticeDials();
         resultsForm.ProcessMessages(messages);
 
         AppendLog($"DEMO: Practice run started for lane(s): {string.Join(", ", selectedLanes)}.");
@@ -1389,7 +1455,8 @@ public sealed class MainForm : Form
         AppendPracticeSummary(messages);
     }
 
-    private PassResultsForm BeginPracticePassResults(IReadOnlyCollection<int> lanes, bool simulated = false)
+    private PassResultsForm BeginPracticePassResults(IReadOnlyCollection<int> lanes, bool simulated = false,
+        IReadOnlyDictionary<int, int>? dialMilliseconds = null)
     {
         if (passResultsForm is null || passResultsForm.IsDisposed)
         {
@@ -1413,7 +1480,7 @@ public sealed class MainForm : Form
             persistedSettings.SpeechBackend);
         passResultsForm.BeginPass(lanes, persistedSettings.IntervalTimerLanes, simulated,
             modeSelector.SelectedItem as string == "BRACKET"
-                ? lanes.ToDictionary(lane => lane, lane => decimal.ToInt32(dialInputs[lane - 1].Value * 1000M))
+                ? dialMilliseconds
                 : null);
         UpdatePracticeStartButton();
         return passResultsForm;
@@ -1565,6 +1632,7 @@ public sealed class MainForm : Form
         {
             dialInputs[lane].Value = dialog.DialSeconds[lane];
         }
+        ResetPracticeDials();
 
         UpdateDialInputState();
         SaveCurrentSettings();
@@ -1606,6 +1674,9 @@ public sealed class MainForm : Form
 
     private void HandleMessage(ProtocolMessage message)
     {
+        heartbeatQuiet.Observe(message, DateTimeOffset.Now);
+        firmwareUpdateGuard.Observe(message);
+        UpdateFirmwareNotice();
         practiceStarter.Observe(message);
         UpdatePracticeStartButton();
         MarkControllerReady();
@@ -1693,11 +1764,7 @@ public sealed class MainForm : Form
             return;
         }
 
-        var seconds = dialMilliseconds / 1000M;
-        dialInputs[laneNumber - 1].Value = Math.Clamp(
-            seconds,
-            dialInputs[laneNumber - 1].Minimum,
-            dialInputs[laneNumber - 1].Maximum);
+        // Controller status may contain a one-pass override, not a saved default.
     }
 
     private void SendCommand(params string[] parts)
@@ -1706,6 +1773,8 @@ public sealed class MainForm : Form
         {
             var line = ProtocolMessage.Create(parts).Encode();
             client.Send(parts);
+            firmwareUpdateGuard.CommandSent(parts);
+            UpdateFirmwareNotice();
             AppendLog($"> {line}");
         }
         catch (Exception exception)
@@ -1907,6 +1976,7 @@ public sealed class MainForm : Form
         connectionRequested = connected;
         if (!connected)
         {
+            firmwareUpdateGuard.Reset();
             practiceStarter.Cancel();
             controllerReady = false;
             savedSettingsAppliedToController = false;
@@ -1984,8 +2054,10 @@ public sealed class MainForm : Form
             client.SendBatch(commandList);
             foreach (var parts in commandList)
             {
+                firmwareUpdateGuard.CommandSent(parts);
                 AppendLog($"> {ProtocolMessage.Create(parts).Encode()}");
             }
+            UpdateFirmwareNotice();
             return true;
         }
         catch (Exception exception)
@@ -2020,6 +2092,7 @@ public sealed class MainForm : Form
                 dialInputs[lane].Minimum,
                 dialInputs[lane].Maximum);
         }
+        ResetPracticeDials();
     }
 
     private void SaveCurrentSettings()
@@ -2083,6 +2156,7 @@ public sealed class MainForm : Form
 
     private void UpdateConnectionLabel()
     {
+        UpdateFirmwareNotice();
         if (demoMode)
         {
             connectionLabel.Text = "Demo - simulated results";
@@ -2092,6 +2166,7 @@ public sealed class MainForm : Form
         }
         if (!connectionRequested)
         {
+            heartbeatQuiet.Reset();
             connectionLabel.Text = "Disconnected";
             connectionLabel.BackColor = Color.FromArgb(235, 237, 239);
             connectionLabel.ForeColor = Color.FromArgb(92, 99, 106);
@@ -2100,6 +2175,7 @@ public sealed class MainForm : Form
 
         if (!client.IsConnected)
         {
+            heartbeatQuiet.Reset();
             connectionLabel.Text = "Connected — serial port not open";
             connectionLabel.BackColor = Color.FromArgb(252, 222, 222);
             connectionLabel.ForeColor = Color.FromArgb(139, 32, 32);
@@ -2119,6 +2195,13 @@ public sealed class MainForm : Form
         var age = DateTimeOffset.Now - heartbeatAt;
         if (age.TotalSeconds > 3)
         {
+            if (heartbeatQuiet.IsExpected(DateTimeOffset.Now))
+            {
+                connectionLabel.Text = "Heartbeat paused for race — link unverified";
+                connectionLabel.BackColor = Color.FromArgb(255, 236, 179);
+                connectionLabel.ForeColor = Color.FromArgb(97, 66, 0);
+                return;
+            }
             connectionLabel.Text = $"Connected — controller stale {age.TotalSeconds:0}s";
             connectionLabel.BackColor = Color.FromArgb(252, 222, 222);
             connectionLabel.ForeColor = Color.FromArgb(139, 32, 32);
@@ -2196,7 +2279,17 @@ public sealed class MainForm : Form
                     practiceLane.Checked = lane is 0 or 3 && practiceLane.Checked;
                 }
             }
+            practiceDialInputs[lane].Enabled = enabled && practiceLane is { Enabled: true, Checked: true };
         }
+    }
+
+    private Dictionary<int, int> PracticeDials(IEnumerable<int> lanes) => lanes.ToDictionary(
+        lane => lane, lane => decimal.ToInt32(practiceDialInputs[lane - 1].Value * 1000M));
+
+    private void ResetPracticeDials()
+    {
+        for (var lane = 0; lane < LaneCount; lane++)
+            practiceDialInputs[lane].Value = dialInputs[lane].Value;
     }
 
     private IEnumerable<int> SelectedPracticeLanes(int laneCount)

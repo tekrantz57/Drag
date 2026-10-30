@@ -65,6 +65,12 @@ jobs:
           g++ -std=c++17 -I tools/firmware-tests tools/firmware-tests/results.cpp -o /tmp/drag-firmware-tests
           /tmp/drag-firmware-tests
 
+      - name: Compile and test standalone Mega pulse generator
+        run: |
+          arduino-cli compile --fqbn arduino:avr:mega:cpu=atmega2560 dragPulseTest
+          g++ -std=c++17 -D__AVR_ATmega2560__ -I tools/pulse-tests tools/pulse-tests/pulse.cpp -o /tmp/drag-pulse-tests
+          /tmp/drag-pulse-tests
+
       - name: Test speech helper
         run: python3 -B -m unittest tools/test_drag_speech_helper.py
 
@@ -86,7 +92,34 @@ jobs:
       - name: Compile shared sketch for Due Programming Port
         run: arduino-cli compile --fqbn arduino:sam:arduino_due_x_dbg dragMC
 
+      - name: Compile and test standalone Due pulse generator
+        run: |
+          arduino-cli compile --fqbn arduino:sam:arduino_due_x_dbg dragPulseTest
+          g++ -std=c++17 -DARDUINO_SAM_DUE -I tools/pulse-tests tools/pulse-tests/pulse.cpp -o /tmp/drag-pulse-due-tests
+          /tmp/drag-pulse-due-tests
+
       - name: Test Due interrupt capture and shared race logic
         run: |
           g++ -std=c++17 -I tools/firmware-tests tools/firmware-tests/due.cpp -o /tmp/drag-due-tests
           /tmp/drag-due-tests
+
+  c3-pulse-generator:
+    name: Standalone ESP32-C3 pulse generator
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Arduino CLI
+        uses: arduino/setup-arduino-cli@7ef629dcdf0f458ab7ae83149d629443deac6eac # v2.0.0
+
+      - name: Install Espressif ESP32 Boards
+        run: |
+          arduino-cli core update-index --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core install esp32:esp32@3.3.12 --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+
+      - name: Compile C3 generator and test software/RMT engines and output polarities
+        run: |
+          arduino-cli compile --fqbn esp32:esp32:esp32c3:CDCOnBoot=cdc dragPulseTest
+          g++ -std=c++17 -DCONFIG_IDF_TARGET_ESP32C3 -I tools/pulse-tests tools/pulse-tests/pulse.cpp -o /tmp/drag-pulse-c3-tests
+          /tmp/drag-pulse-c3-tests
